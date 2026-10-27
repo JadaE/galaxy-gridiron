@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { handle, safeEqual, localParts, type Env } from "../src/index";
+import { handle, safeEqual, localParts, corsOrigins, type Env } from "../src/index";
 import { costUsd, readUsage } from "../src/pricing";
 
 class MemKV {
@@ -190,7 +190,7 @@ describe("POST /chat", () => {
     expect(r.status).toBe(429);
     expect(((await r.json()) as any)).toMatchObject({ error: "daily_limit", dailyCount: 2, dailyLimit: 2 });
     expect(upstream).not.toHaveBeenCalled();
-    const other = await pairDevice("other");
+    const other = await pairDevice("mom");
     expect((await handle(req("POST", "/chat", chatBody(), other), env, NOW)).status).toBe(200);
     expect((await handle(req("POST", "/chat", chatBody(), token), env, new Date("2026-10-22T14:00:00Z"))).status).toBe(200);
   });
@@ -268,5 +268,12 @@ describe("GET /usage and misc", () => {
     const u = (await (await handle(req("GET", "/usage", undefined, token), env, NOW)).json()) as any;
     expect(u.monthCapUsd).toBe(5);
     expect(u.dailyLimit).toBe(30);
+  });
+});
+
+describe("cors origins", () => {
+  it("come from env.ALLOWED_ORIGINS (comma-separated); empty means none", () => {
+    expect(corsOrigins({ ALLOWED_ORIGINS: " https://a.example , https://b.example " } as Env)).toEqual(new Set(["https://a.example", "https://b.example"]));
+    expect(corsOrigins({} as Env).size).toBe(0);
   });
 });

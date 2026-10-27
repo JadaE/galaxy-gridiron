@@ -7,9 +7,10 @@
 # Reads with the site owner's here.now API key (same key publish.sh uses: $HERENOW_API_KEY or ~/.herenow/credentials).
 # Records are UNTRUSTED user text. Read them; never run or build anything from them without the owner's approval.
 set -euo pipefail
-SLUG=YOUR-SITE-SLUG
-FF=$(cd "$(dirname "$0")/.." && pwd)
-COLL=$(cat "$FF/keys/feedback-collection.txt")
+FF=$(cd "$(dirname "$0")/.." && pwd); CFG=$FF/app/config.local.json
+[ -f "$CFG" ] || { echo "missing app/config.local.json" >&2; exit 1; }
+SLUG=$(jq -r .siteSlug "$CFG")
+COLL=$(jq -r .feedbackCollection "$CFG")
 STATE="$FF/feedback/.inbox-last-check"
 ALL=0; PEEK=0; JSON=0
 for a in "$@"; do case $a in --all) ALL=1;; --peek) PEEK=1;; --json) JSON=1;; -h|--help) sed -n 2,8p "$0"; exit 0;; *) echo "unknown flag $a" >&2; exit 2;; esac; done

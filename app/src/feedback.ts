@@ -3,8 +3,9 @@
 import { Platform } from 'react-native';
 import { VERSION_NAME, VERSION_CODE } from './version';
 import { SITE } from './picks/sync';
+import { FEEDBACK_COLLECTION_ID } from './config';
 
-export const FEEDBACK_COLLECTION = 'YOUR_SECRET_PATH';
+export const FEEDBACK_COLLECTION = FEEDBACK_COLLECTION_ID;
 const URL_ = `${SITE}/.herenow/data/${FEEDBACK_COLLECTION}`;
 export type FeedbackKind = 'bug' | 'idea';
 export type Feedback = { kind: FeedbackKind; text: string; screen?: string; user?: string };

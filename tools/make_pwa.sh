@@ -2,13 +2,18 @@
 # Build + stage the iPhone web app (PWA) into publish-site/<pwa-secret>/ (a STABLE folder: home-screen icons point here).
 # Usage: NOTES="..." bash tools/make_pwa.sh
 set -euo pipefail
-FF=/workspace/fantasy-football; P=$(cat $FF/keys/pwa-secret-path.txt); OUT=$FF/dist-web; D=$FF/publish-site/$P
+FF=$(cd "$(dirname "$0")/.." && pwd); CFG=$FF/app/config.local.json
+[ -f "$CFG" ] || { echo "missing app/config.local.json (copy app/config.example.json and fill it in)" >&2; exit 1; }
+cfg() { jq -r "$1" "$CFG"; }
+PUB=$(cfg '.publishSiteDir // empty'); PUB=${PUB:-$FF/publish-site}  # staging dir uploaded to here.now (keep it persistent: it holds every version folder)
+P=$(cfg .pwaSecretPath); SLUG=$(cfg .siteSlug); OUT=$FF/dist-web; D=$PUB/$P
 VN=$(jq -r .expo.version $FF/app/app.json); VC=$(jq -r .expo.android.versionCode $FF/app/app.json)
 cd $FF/app && rm -rf $OUT && PWA_BASE=/$P EXPO_PUBLIC_PWA_BASE=/$P npx expo export --platform web --output-dir $OUT >/tmp/pwa-export.log 2>&1 || { tail -20 /tmp/pwa-export.log; exit 1; }
 grep -q "/$P" $OUT/_expo/static/js/web/index-*.js || { echo "PWA base not inlined" >&2; exit 1; }
-$FF/.venv-shots/bin/python - "$OUT" <<'PY'
+PYBIN=$FF/.venv-shots/bin/python; [ -x "$PYBIN" ] || PYBIN=python3
+$PYBIN - "$OUT" "$FF" <<'PY'
 import sys; from PIL import Image
-out=sys.argv[1]; src=Image.open('/workspace/fantasy-football/app/assets/icon.png').convert('RGBA')
+out=sys.argv[1]; src=Image.open(sys.argv[2]+'/app/assets/icon.png').convert('RGBA')
 bg=(7,11,28,255)
 def save(n, size, pad=0):
   c=Image.new('RGBA',(size,size),bg); s=int(size*(1-2*pad)); c.alpha_composite(src.resize((s,s),Image.LANCZOS),((size-s)//2,(size-s)//2)); c.convert('RGB').save(f'{out}/{n}', optimize=True)
@@ -35,10 +40,11 @@ open(p,'w').write(s)
 PY
 rm -rf $D && mkdir -p $D && cp -r $OUT/. $D/
 cat > $D/pwa-version.json <<J
-{"versionCode": $VC, "versionName": "$VN", "apkUrl": "https://YOUR-SITE-SLUG.here.now/$P/", "notes": $(jq -Rn --arg n "${NOTES:-}" '$n')}
+{"versionCode": $VC, "versionName": "$VN", "apkUrl": "https://$SLUG.here.now/$P/", "notes": $(jq -Rn --arg n "${NOTES:-}" '$n')}
 J
 # same-site read-only relay (here.now proxy routes): fixed upstreams = host allowlist, GET only, no secrets
-cat > $FF/publish-site/.herenow/proxy.json <<J
+mkdir -p $PUB/.herenow
+cat > $PUB/.herenow/proxy.json <<J
 {"proxies": {
   "/$P/relay/yt": {"upstream": "https://www.youtube.com/feeds/videos.xml", "method": "GET", "rateLimit": "300/hour/ip"},
   "/$P/relay/espn/*": {"upstream": "https://site.api.espn.com/apis/site/v2/sports/football/nfl", "method": "GET", "rateLimit": "300/hour/ip"}

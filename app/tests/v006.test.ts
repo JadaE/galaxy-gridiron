@@ -11,7 +11,7 @@ const t = async (n: string, f: () => any) => { try { await f(); pass++; console.
     assert.match(r.app, /^0\.0\.\d+ \(\d+\)/); assert.ok(r.device.length > 0); assert.equal(r.user, 'testuser'); assert.ok(r.ts > 0);
   });
   await t('feedback: unknown kind becomes bug; too-short text rejected', () => { assert.equal(buildRecord({ kind: 'x' as any, text: 'abc' }).kind, 'bug'); assert.throws(() => buildRecord({ kind: 'idea', text: ' a ' })); });
-  await t('feedback collection name is long and random-looking', () => { assert.match(FEEDBACK_COLLECTION, /^(fb[0-9a-f]{30}|YOUR_[A-Z_]+)$/); });
+  await t('feedback collection name is long and random-looking', () => { assert.match(FEEDBACK_COLLECTION, /^(fb[0-9a-f]{30}|YOUR_COLLECTION_ID)$/); });
   await t('feedback POST goes to the Site Data collection, insert only', async () => {
     let seen: any = null;
     await sendFeedback({ kind: 'idea', text: 'dark mode for picks' }, (async (u: any, o: any) => { seen = { u, o }; return { ok: true, status: 201 } as any; }) as any);

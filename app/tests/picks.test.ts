@@ -160,7 +160,7 @@ t('sample 8: messy whitespace, CRLF, W6 shorthand header, all caps', () => {
 console.log('Export / import');
 t('export then import round-trips; junk rows skipped', () => {
   const p: PickMap = { [game(6, 'GB').id]: { team: 'GB', week: 6, at: 1, src: 'live' } };
-  const f = exportFile('1000000000000000001', 'testuser', 2026, p);
+  const f = exportFile('1000000000000000007', 'testuser', 2026, p);
   const txt = JSON.stringify({ ...f, picks: { ...f.picks, bad: { team: 'XYZ', week: 99 } } });
   const r = parseImport(txt, new Set(Object.keys(TEAMS)));
   assert.ok(r.ok); if (r.ok) { assert.equal(Object.keys(r.picks).length, 1); assert.equal(r.skipped, 1); }

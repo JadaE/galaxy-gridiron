@@ -1,37 +1,33 @@
-# secrets / local config
+# secrets / local config (never commit)
+config.local.json
 keys/
-.env*
-credentials*
+.herenow/
+*.keystore
+*.jks
 secret-config.json
 site-config.json
-.herenow/
-herenow/
 state.json
-*.jks
-*.keystore
-*.pem
-*.key
-# dependencies and build output
-node_modules/
+.env*
+data/
+# build output / generated
+node_modules
+android/
+ios/
+.expo/
 dist/
 dist-web/
-build/
-.expo/
-.gradle/
-android/app/build/
-app/android/
-app/ios/
 publish-site/
-/site/
+web-build/
 *.apk
-*.aab
-# logs, scratch, large media
+.wrangler/
+.dry-run/
+.venv-shots/
+__pycache__/
+# local working data
+feedback/
 logs/
-*.log
-/screenshots/
-/screens/
-*.mp4
-*.mov
-*.zip
-.DS_Store
-data/
+screenshots/full/
+research/
+RELEASE_NOTES.md
+tools/updtest/
+app/tests/_try*.ts

@@ -1,4 +1,5 @@
 // Run: npx tsx tests/junk.test.ts  (v0.0.5: junk players + trade-question routing; real Sleeper data, read-only)
+import { SLP } from './live-ids';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { slimPlayers } from '../src/api';
@@ -9,13 +10,13 @@ import { normalize } from '../src/chat/names';
 import { rules } from '../src/chat/engine';
 import { tradeIdeas } from '../src/trades';
 import { pickups } from '../src/pickups';
-const UID = (process.env.GG_USER_ID || '1000000000000000001');
+const UID = SLP.userId;
 const HER = "What's some good trades that don't involve high worth or locked players?";
 let pass = 0, fail = 0;
 const t = async (n: string, f: () => any) => { try { await f(); pass++; console.log('  ✓', n); } catch (e: any) { fail++; console.log('  ✗', n, '\n     ', e.message); } };
 
 (async () => {
-  const raw = JSON.parse(fs.readFileSync(process.env.GG_PLAYERS_JSON || __dirname + '/../../data/players_nfl.json', 'utf8'));
+  const raw = JSON.parse(fs.readFileSync('/workspace/fantasy-football/data/players_nfl.json', 'utf8'));
   const slim = slimPlayers(raw);
   console.log('raw data');
   await t('"Duplicate Player" entries are all dropped', () => {
@@ -51,9 +52,7 @@ const t = async (n: string, f: () => any) => { try { await f(); pass++; console.
   });
   await t('"start Pitts or Wilson" is not a trade question', () => assert.equal(tradeAsk(normalize('start Pitts or Wilson'), 'start Pitts or Wilson'), null));
 
-  const liveLeagues = [process.env.GG_LEAGUE_MG, process.env.GG_LEAGUE_FS].filter(Boolean) as string[];
-  if (!process.env.GG_USER_ID || !liveLeagues.length) console.log('SKIP live-league checks: set GG_USER_ID and GG_LEAGUE_MG / GG_LEAGUE_FS to run them.');
-  for (const lid of (process.env.GG_USER_ID ? liveLeagues : [])) {
+  for (const lid of [SLP.leagues.mg, SLP.leagues.fs]) {
     const b = await loadBundle(lid, UID);
     console.log(b.league.name);
     const mine = b.me.players;

@@ -4,13 +4,13 @@ import fs from 'node:fs';
 import { NameIndex, normalize, lev } from '../src/chat/names';
 import { parse } from '../src/chat/intents';
 
-const all = JSON.parse(fs.readFileSync(process.env.GG_PLAYERS_JSON || __dirname + '/../../data/players_nfl.json', 'utf8'));
+const all = JSON.parse(fs.readFileSync('/workspace/fantasy-football/data/players_nfl.json', 'utf8'));
 import { slimPlayers } from '../src/api';
 const players: Record<string, any> = slimPlayers(all); // same filter the app uses (v0.0.5 junk rules)
 const proj: Record<string, number> = JSON.parse(fs.readFileSync(__dirname + '/fixture_proj_w7.json', 'utf8'));
 const MG = JSON.parse(fs.readFileSync(__dirname + '/fixture_rosters_mg.json', 'utf8'));
 const FS = JSON.parse(fs.readFileSync(__dirname + '/fixture_rosters_fs.json', 'utf8'));
-const UID = '1000000000000000001';
+const UID = '1000000000000000007';
 function indexFor(rosters: any[]) {
   const mine = new Set<string>(rosters.find(r => r.owner_id === UID).players);
   const rostered = new Set<string>(rosters.flatMap(r => r.players || []));
