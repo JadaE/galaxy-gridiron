@@ -38,7 +38,7 @@ async def main():
       js = "localStorage.removeItem('ggs:upd:lastCheck');localStorage.removeItem('ggs:upd:latest');localStorage.removeItem('ggs:upd:dismissed');localStorage.removeItem('ggs:ai:curChat');localStorage.removeItem('ggs:ai:chats');"
       js += "localStorage.setItem('ggs:tags:%s', JSON.stringify({'9509':'never'}));" % FS
       if mode=='paired': js += "localStorage.setItem('ggs:ai:tier','budget');localStorage.setItem('ggsec_gg_ai_base','%s');localStorage.setItem('ggsec_gg_ai_token','%s');localStorage.setItem('ggs:ai:usage','null');" % (W,tok)
-      elif mode in('unpaired','unpairedurl'): js += "localStorage.setItem('ggs:ai:tier','budget');localStorage.removeItem('ggsec_gg_ai_token');" + ("localStorage.setItem('ggsec_gg_ai_base','https://galaxy-gridiron-ai.jada.workers.dev');" if mode=='unpairedurl' else "localStorage.removeItem('ggsec_gg_ai_base');")
+      elif mode in('unpaired','unpairedurl'): js += "localStorage.setItem('ggs:ai:tier','budget');localStorage.removeItem('ggsec_gg_ai_token');" + ("localStorage.setItem('ggsec_gg_ai_base','https://galaxy-gridiron-ai.example.workers.dev');" if mode=='unpairedurl' else "localStorage.removeItem('ggsec_gg_ai_base');")
       else: js += "localStorage.setItem('ggs:ai:tier','rules');"
       await page.evaluate(js)
       await page.goto('http://localhost:8081/?auto=1&rssproxy=1&'+q, wait_until='networkidle', timeout=180000)
