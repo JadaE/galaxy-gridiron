@@ -1,0 +1,48 @@
+{
+  "expo": {
+    "name": "Galaxy Gridiron",
+    "slug": "galaxy-gridiron",
+    "version": "0.0.9",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#070B1C",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.jada.galaxygridiron"
+    },
+    "android": {
+      "package": "com.jada.galaxygridiron",
+      "versionCode": 9,
+      "adaptiveIcon": {
+        "backgroundColor": "#030720",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.INTERNET"
+      ],
+      "blockedPermissions": [
+        "android.permission.RECORD_AUDIO",
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "enableProguardInReleaseBuilds": false
+          }
+        }
+      ],
+      "expo-secure-store"
+    ]
+  }
+}

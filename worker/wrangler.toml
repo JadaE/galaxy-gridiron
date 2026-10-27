@@ -1,0 +1,21 @@
+# Galaxy Gridiron AI proxy - Cloudflare Workers FREE plan (Workers + KV only).
+# No secrets in this file. Secrets are set with:
+#   npx wrangler secret put OPENAI_API_KEY
+#   npx wrangler secret put PAIRING_CODE
+name = "galaxy-gridiron-ai"
+main = "src/index.ts"
+compatibility_date = "2026-10-01"
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "GG_KV"
+# No id needed: `wrangler deploy` creates the KV namespace automatically (wrangler >= 4.45)
+# and writes its id back here.
+
+[vars]
+MONTH_CAP_USD = "5"          # hard monthly AI budget enforced by the Worker (below the $10 prepaid)
+DAILY_LIMIT = "30"           # AI questions per paired device per day
+MAX_DEVICES = "5"            # max phones that can pair
+TIMEZONE = "America/Chicago" # when the daily/monthly counters reset
+BUDGET_MODEL = "gpt-6-luna"
+BETTER_MODEL = "gpt-6.1-sol"

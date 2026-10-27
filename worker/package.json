@@ -1,0 +1,20 @@
+{
+  "name": "galaxy-gridiron-ai-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "engines": { "node": ">=22" },
+  "type": "module",
+  "description": "Read-only fantasy football AI chat proxy for the Galaxy Gridiron app (Cloudflare Worker + KV, free plan).",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test && wrangler deploy --dry-run --outdir .dry-run",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261021.1",
+    "typescript": "^5.9.0",
+    "vitest": "^3.2.0",
+    "wrangler": "^4.151.0"
+  }
+}
