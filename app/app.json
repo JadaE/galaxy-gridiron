@@ -2,7 +2,7 @@
   "expo": {
     "name": "Galaxy Gridiron",
     "slug": "galaxy-gridiron",
-    "version": "0.0.9",
+    "version": "0.0.10",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.jada.galaxygridiron",
-      "versionCode": 9,
+      "versionCode": 10,
       "adaptiveIcon": {
         "backgroundColor": "#030720",
         "foregroundImage": "./assets/android-icon-foreground.png",

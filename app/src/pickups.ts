@@ -1,4 +1,4 @@
-import { Bundle, ros, optimalLineup, FLEX_ELIG, elig, ppos, pname, isOut, rosteredSet, byeWeek, projOf, val, isRelevant } from './model';
+import { Bundle, ros, optimalLineup, FLEX_ELIG, elig, ppos, pname, isOut, rosteredSet, byeWeek, projOf, val, isRelevant, benchWorth } from './model';
 
 export type DropPick = { id: string | null; cost: number; safety: 'Safe' | 'OK' | 'Risky'; reasons: string[] };
 
@@ -21,7 +21,9 @@ export function bestDrop(b: Bundle, addId: string | null): DropPick {
   if (!cands.length) return { id: null, cost: 99, safety: 'Risky', reasons: ['Every player is a starter'] };
   const scored = cands.map(c => {
     const pos = ppos(b, c);
-    let cost = ros(b, c);
+    // v0.0.10: a bench QB/K/DEF can't fill a flex, so he only scores on a bye/injury week: keeping him is worth a
+    // fraction of his points (a ~20-pt bench WR who can flex in is never dropped for a 10-15 pt backup QB)
+    let cost = ros(b, c) * benchWorth(b, pos);
     const reasons: string[] = [];
     const inj = b.players[c]?.i;
     if (isOut(inj)) { cost *= inj === 'IR' ? 0.35 : 0.6; reasons.push(`${inj === 'IR' ? 'On IR' : inj} and taking a bench spot`); }
@@ -40,7 +42,7 @@ export function bestDrop(b: Bundle, addId: string | null): DropPick {
     if (['QB', 'TE', 'K', 'DEF'].includes(pos) && samePos.length + addSame === 0) { cost += 3; reasons.push(`Your only other ${pos}`); }
     const myBye = byeWeek(b, c);
     if (myBye && myBye >= wk && myBye <= wk + 1) reasons.push(`On bye week ${myBye}`);
-    if (['K', 'DEF'].includes(pos) && samePos.length >= 1 && !reasons.length) reasons.push(`Spare ${pos} - only needed for byes`);
+    if (benchWorth(b, pos) < 1 && samePos.length >= 1 && !reasons.length) reasons.push(`Spare ${pos} - only plays on byes or injuries (no flex spot takes a ${pos})`);
     if (!reasons.length) reasons.push(`Bench player, ${ros(b, c).toFixed(1)} expected pts`);
     return { id: c, cost, reasons };
   }).sort((x, y) => x.cost - y.cost);
@@ -76,7 +78,7 @@ export function pickups(b: Bundle, limit = 30): Fit[] {
     if (!w) return;
     const r = ros(b, id);
     const gain = r - w.v;
-    const depth = r - genericDrop.cost;
+    const depth = r * benchWorth(b, pl.p) - genericDrop.cost; // v0.0.10: a bench QB/DEF/K adds bye cover only
     if (depth <= 0 && gain <= 0) return;
     const score = Math.max(gain, 0) + 0.5 * Math.max(depth, 0) + Math.min(1.5, Math.log10(1 + (trend[id] || 0)) * 0.25);
     res.push({ id, pos: pl.p, proj: projOf(b, id), value: val(b, id), ros: r, gain, over: w.id, trend: trend[id] || 0, drop: genericDrop, score, bye: byeWeek(b, id) });

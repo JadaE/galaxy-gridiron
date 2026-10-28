@@ -1,5 +1,5 @@
 // Chat engines. The UI only talks to ChatEngine.answer(question, context), so a future AI backend can be swapped in.
-import { pronObj, lineupGap, deadThisWeek, FLEX_ELIG, elig } from '../model';
+import { pronObj, lineupGap, deadThisWeek, FLEX_ELIG, elig, benchWorth } from '../model';
 import { Bundle, pname, ppos, projOf, val, ros, fmt, isOut, optimalLineup, slotLabel, lineupAlerts, waiverReport, txReason, summary, ordinal, matchupFor, byeWeek, famLabel, isRelevant, pron } from '../model';
 import { pickups, bestDrop } from '../pickups';
 import { tradeIdeas, Tags } from '../trades';
@@ -161,12 +161,12 @@ function pickupOne(b: Bundle, id: string): Reply {
   if (C.statusKind === 'other') return { text: `${C.name} isn't available. ${C.status} has ${pronObj(b, id)}${C.fc ? ` (trade value ${C.fc})` : ''}. Try the Trades tab if you want ${pronObj(b, id)}.`, cards: [C], tab: 'Trades' };
   const mine = b.me.players.filter(x => !b.me.reserve.includes(x));
   const opt = optimalLineup(b, mine, x => ros(b, x));
-  const elig = opt.filter(o => o.id && (o.slot === C.pos || (['FLEX', 'WRRB_FLEX', 'REC_FLEX', 'SUPER_FLEX'].includes(o.slot) && ['RB', 'WR', 'TE', 'QB'].includes(C.pos))));
+  const elig = opt.filter(o => o.id && (FLEX_ELIG[o.slot] || [o.slot]).includes(C.pos)); // v0.0.10: a QB never counts against a FLEX starter
   const weakest = elig.sort((x, y) => x.v - y.v)[0];
   const r = ros(b, id);
   const gain = weakest ? r - weakest.v : 0;
   const drop = bestDrop(b, id);
-  const net = r - drop.cost;
+  const net = (gain > 0 ? r : r * benchWorth(b, C.pos)) - drop.cost; // v0.0.10: bench QB/DEF/K = bye cover only
   const verdict = net > 2 && gain > 0 ? `✅ Yes, add ${pronObj(b, id)}. ${pron(b, id, true)}'d start over ${pname(b, weakest!.id!)} (+${fmt(gain)} expected pts).`
     : net > 0.5 ? `🤔 Worth it as depth (+${fmt(net)} over your weakest bench spot), but ${pron(b, id)} wouldn't start yet.`
     : `❌ Pass. He isn't better than what you already have (${fmt(r)} vs ${fmt(drop.cost)} for your most droppable player).`;
@@ -181,7 +181,7 @@ function dropOne(b: Bundle, id: string): Reply {
   const opt = optimalLineup(b, mine, x => ros(b, x));
   const starting = opt.some(o => o.id === id);
   const alt = bestDrop(b, null);
-  const verdict = starting ? `❌ Keep ${pronObj(b, id)}. ${pron(b, id, true)}'s in your best lineup right now.` : alt.id && alt.id !== id && ros(b, alt.id) < ros(b, id) - 1 ? `🤔 If you need a spot, drop ${pname(b, alt.id)} first (${alt.reasons[0]}).` : `✅ ${pron(b, id, true)}'s a fine drop if you need the spot.`;
+  const verdict = starting ? `❌ Keep ${pronObj(b, id)}. ${pron(b, id, true)}'s in your best lineup right now.` : alt.id && alt.id !== id && alt.cost < ros(b, id) * benchWorth(b, ppos(b, id)) - 1 ? `🤔 If you need a spot, drop ${pname(b, alt.id)} first (${alt.reasons[0]}).` : `✅ ${pron(b, id, true)}'s a fine drop if you need the spot.`;
   return { text: `${C.name}: ${fmt(C.proj)} proj, ${fmt(C.median)} median, ${C.tier}.`, cards: [C], verdict };
 }
 
