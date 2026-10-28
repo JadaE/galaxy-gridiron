@@ -14,14 +14,14 @@ def token():
 # (name, query, storage-setup)
 SHOTS=[
  ('01-chat-rules-fit-wilson-pitts', f'tab=Team&league={MG}&ask=Wilson%20or%20Pitts%20Sr', 'rules'),
- ('02-chat-fit-burrow-maye-fam-slam', f'tab=Team&league={FS}&ask=Burrow%20or%20Maye', 'rules'),
+ ('02-chat-fit-burrow-maye-mock-league-alpha', f'tab=Team&league={FS}&ask=Burrow%20or%20Maye', 'rules'),
  ('03-chat-budget-ai-cost-counter', f'tab=Team&league={MG}&ask=Wilson%20or%20Pitts%20Sr', 'paired'),
  ('04-chat-ai-setup-card', f'tab=Team&league={MG}&ask=Should%20I%20pick%20up%20Pitts', 'unpaired'),
  ('05-update-banner', f'tab=Team&league={FS}&updurl=http://localhost:8095/version.json', 'upd'),
  ('06-settings-ai-not-paired', f'tab=Team&league={FS}&settings=ai', 'unpairedurl'),
  ('07-settings-ai-paired', f'tab=Team&league={FS}&settings=ai', 'paired'),
- ('08-trades-ideas-fam-slam', f'tab=Trades&league={FS}', 'rules'),
- ('08b-trades-ideas-moments-gang', f'tab=Trades&league={MG}', 'rules'),
+ ('08-trades-ideas-mock-league-alpha', f'tab=Trades&league={FS}', 'rules'),
+ ('08b-trades-ideas-mock-league-beta', f'tab=Trades&league={MG}', 'rules'),
 ]
 only=sys.argv[1:]
 async def main():
