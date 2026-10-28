@@ -1,12 +1,16 @@
 # Upgrade-path test (web preview): seed v0.0.4-era storage, load the new build WITHOUT ?auto, check the user stays signed in
 # and every saved key/value is still there. Then a fresh profile: empty username field + tutorial with the username step.
+import os, json as _json
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+_C = _json.load(open(_ROOT + '/app/config.local.json'))  # real values live only in the gitignored config
+_S = _C['sleeper']
 import asyncio, json
 from playwright.async_api import async_playwright
-UID='1000000000000000001'
-V004={ 'ggs:username':'demo_user', 'ggs:league':'2000000000000000002',
+UID=_S['userId']
+V004={ 'ggs:username':_S['username'], 'ggs:league':_S['leagues']['fs'],
   f'ggs:picks:{UID}:2026': json.dumps({'401772510':{'team':'KC','week':1,'at':0,'src':'backfill'},'401772600':{'team':'BUF','week':2,'at':1757000000000,'src':'live'}}),
-  f'ggs:lb:me:{UID}': json.dumps({'uid':UID,'un':'demo_user','joinedAt':1760000000000}),
-  'ggs:tags:2000000000000000002': json.dumps({'11564':'high'}), 'ggs:picks:pref:inclBf':'1', 'ggs:upd:dismissed':'4' }
+  f'ggs:lb:me:{UID}': json.dumps({'uid':UID,'un':_S['username'].lower(),'joinedAt':1760000000000}),
+  'ggs:tags:'+_S['leagues']['fs']: json.dumps({'11564':'high'}), 'ggs:picks:pref:inclBf':'1', 'ggs:upd:dismissed':'4' }
 async def main():
   async with async_playwright() as p:
     br=await p.chromium.launch(executable_path='/usr/bin/google-chrome', args=['--no-sandbox'])
@@ -23,7 +27,7 @@ async def main():
     print('UPGRADE signed_in=%s tutorial_shown=%s kept=%d/%d' % (signed, tut>0, len(kept), len(V004)))
     for k in V004:
       if k not in kept: print('  changed:', k, V004[k][:60], '->', (after.get(k) or 'None')[:60])
-    await pg.screenshot(path='/workspace/fantasy-football/screenshots/v0.0.6/full/upgrade-from-v004.png')
+    await pg.screenshot(path=_ROOT+'/screenshots/v0.0.6/full/upgrade-from-v004.png')
     # fresh install
     await pg.evaluate("localStorage.clear()")
     await pg.goto('http://localhost:8081/', wait_until='networkidle', timeout=300000); await pg.wait_for_timeout(5000)

@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Stage one version's download page under its own secret path, leaving other versions' folders in place.
-# Usage: make_site_v.sh <version> <secret-file> <shots-dir>
+# Usage: make_site_v.sh <version> <publishPaths key in app/config.local.json, e.g. v009 (or a file holding the path)> <shots-dir>
 set -euo pipefail
-FF=/workspace/fantasy-football; V=$1; SECRET=$(cat $2); SHOTS=$3
+FF=$(cd "$(dirname "$0")/.." && pwd); CFG=$FF/app/config.local.json
+[ -f "$CFG" ] || { echo "missing app/config.local.json (copy app/config.example.json and fill it in)" >&2; exit 1; }
+cfg() { jq -r "$1" "$CFG"; }
+PUB=$(cfg '.publishSiteDir // empty'); PUB=${PUB:-$FF/publish-site}  # staging dir uploaded to here.now (keep it persistent: it holds every version folder)
+V=$1; SECRET=$([ -f "$2" ] && tr -d "\r\n" < "$2" || cfg ".publishPaths.\"$2\""); SHOTS=$3
 APK=$FF/dist/GalaxyGridiron-v$V.apk
-SITE=$FF/publish-site; D=$SITE/$SECRET; rm -rf $D; mkdir -p $D/shots
+SITE=$PUB; D=$SITE/$SECRET; rm -rf $D; mkdir -p $D/shots
 [ -f $SITE/index.html ] || echo '<!doctype html><meta charset=utf-8><title>🌌</title><body style="background:#0B1022;color:#636C93;font-family:sans-serif;display:grid;place-items:center;height:90vh">✨</body>' > $SITE/index.html
 cp $APK $D/; cp $SHOTS/*.png $D/shots/
 SHA=$(sha256sum $APK | cut -c1-16); SIZE=$(du -m $APK | cut -f1)

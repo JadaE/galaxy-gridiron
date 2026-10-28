@@ -1,7 +1,8 @@
 // Run: npx tsx tests/sync.test.ts  (mocked store; plus one live read of the real collection)
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import { setKv, resolve, snapshotFor, enqueue, flush, pendingCount, fetchSnaps, Snap, COLLECTION } from '../src/picks/sync';
+import { setKv, resolve, snapshotFor, enqueue, flush, pendingCount, fetchSnaps, Snap } from '../src/picks/sync';
+import { SITE_ORIGIN as SITE } from '../src/config';
 import { Game, weekRecord } from '../src/picks/core';
 let pass = 0, fail = 0;
 const t = async (n: string, f: () => any) => { try { await f(); pass++; console.log('  ✓', n); } catch (e: any) { fail++; console.log('  ✗', n, '\n     ', e.message); } };
@@ -42,7 +43,7 @@ setKv(async k => mem[k] ?? null, async (k, v) => { mem[k] = v; });
 
   console.log('Offline queue');
   await t('one queued snapshot per user+week; offline keeps it; next flush sends it with Origin + Idempotency-Key', async () => {
-    const me = { uid: '1000000000000000001', un: 'testuser' };
+    const me = { uid: '1000000000000000007', un: 'testuser' };
     await enqueue(snapshotFor(me, 2026, 7, { '401873010': { team: 'CHI', week: 7, at: 1, src: 'live' } }));
     await enqueue(snapshotFor(me, 2026, 7, { '401873010': { team: 'NE', week: 7, at: 2, src: 'live' } }));
     assert.equal(await pendingCount(), 1);
@@ -53,11 +54,11 @@ setKv(async k => mem[k] ?? null, async (k, v) => { mem[k] = v; });
     let seen: any;
     const ok = await flush((async (_u: string, init: any) => { seen = init; return new Response('{"record":{}}', { status: 201 }); }) as any);
     assert.equal(ok.sent, 1); assert.equal(await pendingCount(), 0);
-    assert.equal(seen.headers.Origin, 'https://YOUR-SITE-SLUG.here.now'); assert.ok(seen.headers['Idempotency-Key']);
+    assert.equal(seen.headers.Origin, SITE); assert.ok(seen.headers['Idempotency-Key']);
     assert.equal(JSON.parse(seen.body).picks['401873010'], 'NE');
   });
-  if (COLLECTION.startsWith('YOUR_')) console.log('  - skipped: live read of the collection (src/picks/sync.ts still has the YOUR_COLLECTION_ID placeholder)');
-  else await t('live read of the real collection (self-test rows are filtered out)', async () => {
+  await t('live read of the real collection (self-test rows are filtered out)', async () => {
+    if (/YOUR-SITE-SLUG/.test(SITE)) { console.log('      skipped (placeholder config)'); return; }
     const r = await fetchSnaps(2026, true);
     assert.ok(Array.isArray(r.snaps)); assert.ok(r.snaps.every(s => !s.un.startsWith('_')));
   });

@@ -1,5 +1,6 @@
+import { UID, FS } from './ids';
 import { loadBundle, pname } from '../../app/src/model';
-(async()=>{ const b = await loadBundle((process.env.GG_LEAGUE_FS || '2000000000000000002'),(process.env.GG_USER_ID || '1000000000000000001'));
+(async()=>{ const b = await loadBundle(FS,UID);
  const id = b.me.players.find(i=>pname(b,i)==='A.J. Brown')!; const v=b.valuer.get(id);
  console.log(id, b.players[id], 'proj', b.proj[id], 'season', b.season_[id]);
  console.log(v.weeks.map(w=>`${w.w}:${w.played?w.pts.toFixed(1):'-'}${w.team||''}`).join(' '), 'games', v.games, 'median', v.median, 'value', v.value);

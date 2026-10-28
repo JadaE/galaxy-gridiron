@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Stage the download site: root page is blank; everything lives under a long random path.
 set -euo pipefail
-FF=/workspace/fantasy-football
-SECRET=$(cat $FF/keys/publish-secret-path.txt)
-SITE=$FF/publish-site; rm -rf $SITE; mkdir -p $SITE/$SECRET/shots
+FF=$(cd "$(dirname "$0")/.." && pwd); CFG=$FF/app/config.local.json
+[ -f "$CFG" ] || { echo "missing app/config.local.json (copy app/config.example.json and fill it in)" >&2; exit 1; }
+cfg() { jq -r "$1" "$CFG"; }
+PUB=$(cfg '.publishSiteDir // empty'); PUB=${PUB:-$FF/publish-site}  # staging dir uploaded to here.now (keep it persistent: it holds every version folder)
+SECRET=$(cfg .publishPaths.v001)
+SITE=$PUB; rm -rf $SITE; mkdir -p $SITE/$SECRET/shots
 cat > $SITE/index.html <<'H'
 <!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width"><title>🌌</title><body style="background:#0B1022;color:#636C93;font-family:sans-serif;display:grid;place-items:center;height:90vh">✨</body>
 H
@@ -26,7 +29,7 @@ main{max-width:760px;margin:auto;padding:28px 18px}h1{font-size:30px;margin:6px 
 <li>Open this page in <b>Chrome</b> on your Android phone and tap Download.</li>
 <li>Tap the downloaded file. If Android says Chrome can't install unknown apps, tap <b>Settings → Allow from this source</b>, then go back.</li>
 <li>Tap <b>Install</b>. <b>Play Protect</b> may warn about an "unknown app" because the app isn't from the Play Store. Tap <b>More details → Install anyway</b>. It only reads public Sleeper data.</li>
-<li>Open <b>Galaxy Gridiron</b>, check that the username says demo_user, and tap <b>Launch 🚀</b>. The first load takes about 10 seconds.</li></ol></div>
+<li>Open <b>Galaxy Gridiron</b>, check that your Sleeper username is filled in, and tap <b>Launch 🚀</b>. The first load takes about 10 seconds.</li></ol></div>
 <div class=card><b>Screens</b> <span class=small>(phone-size renders of the same app code with your real league data, made in a phone-sized browser)</span><div class=grid style="margin-top:10px">
 H
 for f in $SITE/$SECRET/shots/*.png; do n=$(basename $f); echo "<a href=\"shots/$n\"><img loading=lazy src=\"shots/$n\" alt=\"$n\"></a>"; done

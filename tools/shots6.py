@@ -1,9 +1,13 @@
 # v0.0.6 Android-viewport screenshots (react-native-web, real Sleeper data). Simulated 3-button nav bar (48dp) drawn on top.
+import os, json as _json
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+_C = _json.load(open(_ROOT + '/app/config.local.json'))  # real values live only in the gitignored config
+_S = _C['sleeper']
 import asyncio, sys, os, urllib.request
 from playwright.async_api import async_playwright
 from PIL import Image
-OUT='/workspace/fantasy-football/screenshots/v0.0.6'
-MG=os.environ.get('GG_LEAGUE_MG','2000000000000000001'); FS=os.environ.get('GG_LEAGUE_FS','2000000000000000002')
+OUT=_ROOT+'/screenshots/v0.0.6'
+MG=_S['leagues']['mg']; FS=_S['leagues']['fs']
 # (name, query, inset, viewport height, action)
 SHOTS=[
  ('01-player-card-news-maye', f'tab=Team&league={FS}&inset=48&player=11564', 48, 915, 'scrollnews'),
@@ -42,13 +46,13 @@ async def main():
     await ctx.route('https://site.api.espn.com/**', espn)
     page=await ctx.new_page(); errs=[]
     page.on('pageerror', lambda e: errs.append(str(e)))
-    await page.goto('http://localhost:8081/?auto=1&user=demo_user&rssproxy=1', wait_until='networkidle', timeout=300000)
+    await page.goto('http://localhost:8081/?auto=1&user='+_S['username']+'&rssproxy=1', wait_until='networkidle', timeout=300000)
     await page.wait_for_timeout(6000)
     for name,q,inset,vh,act in SHOTS:
       if only and not any(o in name for o in only): continue
       await page.set_viewport_size({'width':412,'height':vh})
       await page.evaluate("localStorage.setItem('ggs:upd:dismissed','99')")
-      await page.goto('http://localhost:8081/?auto=1&user=demo_user&rssproxy=1&'+q, wait_until='networkidle', timeout=180000)
+      await page.goto('http://localhost:8081/?auto=1&user='+_S['username']+'&rssproxy=1&'+q, wait_until='networkidle', timeout=180000)
       await page.wait_for_timeout(9000)
       if act in ('scrollnews','season'):
         card=page.get_by_test_id('news-card'); await card.scroll_into_view_if_needed(); await page.wait_for_timeout(800)
@@ -61,7 +65,7 @@ async def main():
       if act=='feedback':
         await page.get_by_text('Help & feedback').first.scroll_into_view_if_needed()
         await page.get_by_text('💡 Idea').first.click()
-        await page.get_by_placeholder('What would make it better?').fill('Could the Picks tab show which games another player picked differently?')
+        await page.get_by_placeholder('What would make it better?').fill('Could the Picks tab show which games my mom picked differently?')
         await page.wait_for_timeout(600)
         await page.evaluate("()=>{const e=[...document.querySelectorAll('div')].find(d=>d.textContent==='Help & feedback');let s=e;while(s&&!(s.scrollHeight>s.clientHeight+5&&getComputedStyle(s).overflowY!='visible'))s=s.parentElement;if(s&&e)s.scrollTop+=e.getBoundingClientRect().top-120}")
         await page.wait_for_timeout(600)
