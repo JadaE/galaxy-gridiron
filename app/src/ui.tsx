@@ -166,7 +166,7 @@ export const s = StyleSheet.create({
   subtitle: { color: '#C9C3F5', fontSize: 13, marginTop: 3 },
   card: { backgroundColor: C.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: C.border, overflow: 'hidden' },
   cardHead: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 },
-  cardTitle: { color: C.text, fontSize: 15, fontWeight: '700' },
+  cardTitle: { color: C.text, fontSize: 15, fontWeight: '700', flexShrink: 1, paddingRight: 8 },
   pos: { paddingHorizontal: 5, paddingVertical: 1, borderRadius: 5, borderWidth: 1 },
   posTxt: { fontSize: 10, fontWeight: '800' },
   inj: { paddingHorizontal: 4, borderRadius: 4, borderWidth: 1 },

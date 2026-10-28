@@ -5,6 +5,7 @@ import { useInsets, useBottomPad } from '../safe';
 import { View, Text, ScrollView, Pressable, Image, RefreshControl, useWindowDimensions, Platform, Modal, TextInput, Share, ActivityIndicator, KeyboardAvoidingView } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Header, Card, T, useApp } from '../ui';
+import { InfoButton } from './Info';
 import { C } from '../theme';
 import { PickChart, PctLines } from '../charts';
 import { avatarUrl, sleeper } from '../api';
@@ -44,7 +45,7 @@ function TeamBtn({ g, side, pick, mode, onPick, others }: { g: Game; side: 'home
   const gr = mine ? grade(g, pick) : 'none';
   const done = g.state === 'post';
   const won = done && g.winner === t.abbr;
-  const col = gr === 'W' ? C.green : gr === 'L' ? C.red : gr === 'NR' ? C.sub : mine ? C.mint : C.border;
+  const col = gr === 'W' ? C.green : gr === 'L' ? C.red : gr === 'NR' ? C.sub : mine ? C.banana : C.border; // v0.0.10: banana yellow pick vs green win
   const locked = !canPick(g, mode);
   return (
     <Pressable onPress={() => onPick(t.abbr)} style={({ pressed }) => ({ flex: 1, borderRadius: 14, borderWidth: mine ? 2 : 1, borderColor: col, backgroundColor: mine ? col + '22' : C.card2, padding: 9, alignItems: 'center', gap: 3, opacity: pressed ? 0.7 : locked && !mine ? 0.75 : 1 })}>
@@ -376,7 +377,7 @@ function Board({ me, lbMe, people, byWeek, weeks, myPicks, curWeek, width, inclB
   return (
     <>
       {sample ? <View style={{ borderRadius: 12, borderWidth: 1, borderColor: C.gold, backgroundColor: C.gold + '1A', padding: 10 }}><Text style={{ color: C.gold, fontWeight: '800', fontSize: 12.5 }}>SAMPLE DATA: the two sample rows are made up for this preview. Real rows appear once they join.</Text></View> : null}
-      <Card title="Leaderboard" emoji="🏆" accent={C.gold} right={<Pressable onPress={onReload} hitSlop={8}><Text style={{ color: C.mint, fontSize: 12, fontWeight: '700' }}>{state.loading ? 'Syncing…' : '↻ Sync'}</Text></Pressable>}>
+      <Card title="Leaderboard" emoji="🏆" accent={C.gold} right={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}><Pressable onPress={onReload} hitSlop={8}><Text style={{ color: C.mint, fontSize: 12, fontWeight: '700' }}>{state.loading ? 'Syncing…' : '↻ Sync'}</Text></Pressable><InfoButton k="picksboard" size={20} /></View>}>
         {ranked.map((r, i) => (
           <View key={r.p.uid} style={{ flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 8, borderBottomWidth: i < ranked.length - 1 ? 1 : 0, borderBottomColor: C.border }}>
             <Text style={{ color: i === 0 ? C.gold : C.sub, fontWeight: '900', width: 18, fontSize: 15 }}>{i + 1}</Text>
@@ -395,34 +396,57 @@ function Board({ me, lbMe, people, byWeek, weeks, myPicks, curWeek, width, inclB
           <View style={{ width: 20, height: 20, borderRadius: 6, borderWidth: 2, borderColor: inclBf ? C.gold : C.border, backgroundColor: inclBf ? C.gold : 'transparent', alignItems: 'center', justifyContent: 'center' }}>{inclBf ? <Text style={{ color: C.bg, fontWeight: '900', fontSize: 12 }}>✓</Text> : null}</View>
           <Text style={{ color: C.sub, fontSize: 12.5 }}>Include backfilled picks ✱ (entered after the game)</Text>
         </Pressable>
+        {lbMe ? <Text style={[T.sub, { marginTop: 8 }]}>Sharing as {lbMe.un}{state.pending ? ` · ${state.pending} update${state.pending > 1 ? 's' : ''} waiting to sync` : ' · synced'}{state.stale ? ' · offline copy' : ''}. Tap (i) for how it works.</Text> : null}
+        {state.err ? <Text style={{ color: C.gold, fontSize: 12, marginTop: 4 }}>{state.err}</Text> : null}
+        {lbMe ? <Pressable onPress={onLeave} style={{ marginTop: 8 }}><Text style={{ color: C.dim, fontSize: 12 }}>Stop sharing on this phone</Text></Pressable> : null}
       </Card>
       <Card title="Running win % by week" emoji="🌌">
         <PctLines width={width} labels={played.map(w => 'W' + w)} series={rows.map(r => ({ name: r.p.un + (r.me ? ' (you)' : ''), color: colorOf(r.p.uid), values: played.map(w => r.s.rows.find(x => x.week === w)?.cumPct ?? null) }))} />
       </Card>
-      <Card title="Week by week" emoji="🗓️">
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          <View>
-            <View style={{ flexDirection: 'row' }}><Text style={{ width: 96, color: C.dim, fontSize: 11 }} />{played.map(w => <Text key={w} style={{ width: 46, color: C.dim, fontSize: 11, textAlign: 'center', fontWeight: '700' }}>W{w}</Text>)}</View>
-            {rows.map(r => (
-              <View key={r.p.uid} style={{ flexDirection: 'row', paddingVertical: 5, alignItems: 'center' }}>
-                <Text style={{ width: 96, color: colorOf(r.p.uid), fontSize: 12, fontWeight: '800' }} numberOfLines={1}>{r.p.un.replace(' (sample)', '*')}</Text>
-                {played.map(w => { const x = r.s.rows.find(y => y.week === w)!.rec; const best = Math.max(...rows.map(o => o.s.rows.find(y => y.week === w)!.rec.w)); return <Text key={w} style={{ width: 46, textAlign: 'center', color: x.w + x.l ? (x.w === best ? C.gold : C.text) : C.dim, fontSize: 12, fontWeight: x.w === best && x.w ? '900' : '600' }}>{x.w + x.l ? recStr(x) : '–'}</Text>; })}
-              </View>
-            ))}
-          </View>
-        </ScrollView>
-        <Text style={[T.sub, { marginTop: 6 }]}>Gold = best that week.</Text>
-      </Card>
-      <Card title="How it works" emoji="🤝">
-        <Text style={T.sub}>• Graded on each phone from ESPN's public scores. Ties and postponed games are no result.</Text>
-        <Text style={T.sub}>• A pick counts if it reached the shared board before kickoff (server timestamp). Changes after kickoff are ignored ("late").</Text>
-        <Text style={T.sub}>• Honor system: the board is readable by anyone with the app's link, so hiding other picks until kickoff happens in the app, not on the server. No logins, no passwords.</Text>
-        <Text style={T.sub}>• Your own record always comes from the picks on this phone.</Text>
-        {lbMe ? <Text style={[T.sub, { marginTop: 6 }]}>Sharing as {lbMe.un}{state.pending ? ` · ${state.pending} update${state.pending > 1 ? 's' : ''} waiting to sync` : ' · synced'}{state.stale ? ' · offline copy' : ''}.</Text> : null}
-        {state.err ? <Text style={{ color: C.gold, fontSize: 12, marginTop: 4 }}>{state.err}</Text> : null}
-        {lbMe ? <Pressable onPress={onLeave} style={{ marginTop: 8 }}><Text style={{ color: C.dim, fontSize: 12 }}>Stop sharing on this phone</Text></Pressable> : null}
+      <Card title="Picks by week" emoji="🗓️">
+        <WeekGrid rows={rows.map(r => ({ uid: r.p.uid, name: r.p.un.replace(' (sample)', '*'), color: colorOf(r.p.uid), recs: Object.fromEntries(r.s.rows.map(y => [y.week, y.rec])) }))} weeks={[...played].reverse()} width={width} />
+        <Text style={[T.sub, { marginTop: 6 }]}>Newest week first. Gold = best that week.</Text>
       </Card>
     </>
+  );
+}
+
+/** v0.0.10: newest week first, frozen name column, fade + arrow when there are more weeks to the right. */
+const NAME_W = 92, CELL_W = 46, ROW_H = 28;
+function WeekGrid({ rows, weeks, width }: { rows: { uid: string; name: string; color: string; recs: Record<number, { w: number; l: number }> }[]; weeks: number[]; width: number }) {
+  const [x, setX] = useState(0);
+  const [viewW, setViewW] = useState(Math.max(CELL_W, width - NAME_W));
+  const fullW = weeks.length * CELL_W;
+  const more = fullW - viewW - x > 4;
+  const best = (w: number) => Math.max(0, ...rows.map(o => o.recs[w]?.w || 0));
+  return (
+    <View>
+      <View style={{ flexDirection: 'row' }}>
+        <View style={{ width: NAME_W }}>
+          <View style={{ height: ROW_H - 8 }} />
+          {rows.map(r => <View key={r.uid} style={{ height: ROW_H, justifyContent: 'center' }}><Text style={{ color: r.color, fontSize: 12, fontWeight: '800' }} numberOfLines={1}>{r.name}</Text></View>)}
+        </View>
+        <View style={{ flex: 1 }} onLayout={e => setViewW(e.nativeEvent.layout.width)}>
+          <ScrollView horizontal showsHorizontalScrollIndicator onScroll={e => setX(e.nativeEvent.contentOffset.x)} scrollEventThrottle={32}>
+            <View>
+              <View style={{ flexDirection: 'row', height: ROW_H - 8 }}>{weeks.map(w => <Text key={w} style={{ width: CELL_W, color: C.dim, fontSize: 11, textAlign: 'center', fontWeight: '700' }}>W{w}</Text>)}</View>
+              {rows.map(r => (
+                <View key={r.uid} style={{ flexDirection: 'row', height: ROW_H, alignItems: 'center' }}>
+                  {weeks.map(w => { const rec = r.recs[w] || { w: 0, l: 0 }; const top = rec.w + rec.l > 0 && rec.w === best(w); return <Text key={w} style={{ width: CELL_W, textAlign: 'center', color: rec.w + rec.l ? (top ? C.gold : C.text) : C.dim, fontSize: 12, fontWeight: top && rec.w ? '900' : '600' }}>{rec.w + rec.l ? recStr(rec as any) : '–'}</Text>; })}
+                </View>
+              ))}
+            </View>
+          </ScrollView>
+          {more ? (
+            <View pointerEvents="none" style={{ position: 'absolute', right: 0, top: 0, bottom: 0, width: 44, justifyContent: 'center', alignItems: 'flex-end' }}>
+              <LinearGradient colors={['rgba(22,28,51,0)', C.card]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ position: 'absolute', left: 0, right: 0, top: 0, bottom: 0 }} />
+              <Text style={{ color: C.mint, fontSize: 18, fontWeight: '900', paddingRight: 2 }}>›</Text>
+            </View>
+          ) : null}
+        </View>
+      </View>
+      {more ? <Text style={{ color: C.mint, fontSize: 11, marginTop: 4, textAlign: 'right' }}>Swipe for older weeks ›</Text> : null}
+    </View>
   );
 }
 

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { View, Text, Modal, ScrollView, Pressable, Linking, Image, useWindowDimensions } from 'react-native';
+import { View, Text, Modal, ScrollView, Pressable, useWindowDimensions } from 'react-native';
 import { useApp, Head, Pos, Inj, T, Stat, TagChips } from '../ui';
 import { useInsets } from '../safe';
 import { isJunkPlayer } from '../junk';
@@ -7,24 +7,37 @@ import NewsCard from './NewsCard';
 import { Bars } from '../charts';
 import { C } from '../theme';
 import { InfoButton } from './Info';
-import { ytSearch, channelFeed, Video } from '../api';
-import { CHANNELS } from '../channels';
+import { loadLiveGames, LiveGame } from '../live';
+import { breakdown, loadPlayerWeek, showLive, LiveLine } from '../liveline';
 import { pname, ppos, projOf, ppg, seasonPts, fmt, val, valueSource, byeWeek, famLabel } from '../model';
 
-const SEARCH = [{ name: 'ThatsGoodSports', q: 'ThatsGoodSports' }, { name: 'Fantasy Footballers', q: 'Fantasy Footballers' }, { name: 'Late-Round', q: 'Late Round Fantasy' }, { name: 'FantasyPros', q: 'FantasyPros' }];
-
 export default function PlayerSheet({ id, onClose }: { id: string | null; onClose: () => void }) {
-  const { b, openVideos } = useApp();
+  const { b } = useApp();
   const { width } = useWindowDimensions();
-  const [vids, setVids] = useState<Video[] | null>(null);
   const ins = useInsets();
+  // v0.0.10: live stat line + points breakdown while his game this week is on (refreshes every 25s while live)
+  const [live, setLive] = useState<{ g: LiveGame; line: LiveLine | null } | null>(null);
   useEffect(() => {
-    if (!id || !b.players[id] || isJunkPlayer(b.players[id])) return;
-    setVids(null);
-    let on = true;
-    Promise.all(CHANNELS.filter(c => c.group !== 'NFL').map(c => channelFeed(c.id, c.short).catch(() => null))).then(arr => { if (on) setVids(arr.flatMap(x => x || []).sort((x, y) => y.published.localeCompare(x.published))); });
-    return () => { on = false; };
-  }, [id]);
+    setLive(null);
+    if (!id || b.isPast || !b.players[id] || isJunkPlayer(b.players[id])) return;
+    const team = b.players[id]?.t || (id.length <= 3 ? id : undefined);
+    const ko = team ? b.games?.[team]?.kickoff : undefined;
+    if (!team || (ko && ko > Date.now())) return; // no game yet this week: nothing to poll
+    let on = true, timer: any;
+    const tick = async (force: boolean) => {
+      try {
+        const games = await loadLiveGames(b.season, b.week, force);
+        const g = games?.[team];
+        if (!on || !g || !showLive(g.state)) return;
+        const row = await loadPlayerWeek(id, b.season, b.week, force).catch(() => null);
+        if (!on) return;
+        setLive({ g, line: row ? breakdown(row.stats, b.league?.scoring_settings || {}) : null });
+        if (g.state === 'in') timer = setTimeout(() => tick(true), 25_000);
+      } catch {}
+    };
+    tick(false);
+    return () => { on = false; clearTimeout(timer); };
+  }, [id, b.week, b.season]);
   if (!id) return null;
   const pl = b.players[id];
   if (!pl || isJunkPlayer(pl)) return (
@@ -42,9 +55,6 @@ export default function PlayerSheet({ id, onClose }: { id: string | null; onClos
   const owner = b.teams.find(t => t.players.includes(id));
   const started = new Set<number>();
   for (let w = 1; w <= b.lastScored; w++) { const m = (b.weekly[w] || []).find(x => x.roster_id === b.me.rid); if (m?.starters?.includes(id)) started.add(w); }
-  const last = name.split(' ').slice(-1)[0].toLowerCase();
-  const related = (vids || []).filter(v => v.title.toLowerCase().includes(last));
-  const show = related.slice(0, 5);
   const v = b.isPast ? null : b.valuer.get(id);
   const weeks = v ? v.weeks.map(x => ({ w: x.w, pts: x.played ? x.pts : 0 })) : [];
   const qbChanged = !!v?.qbSplit;
@@ -74,6 +84,29 @@ export default function PlayerSheet({ id, onClose }: { id: string | null; onClos
               <Stat label="Season pts" value={fmt(seasonPts(b, id), 0)} />
               {b.fc?.[id] ? <Stat label="Trade value" value={String(b.fc[id])} color={C.gold} /> : null}
             </View>
+            {live ? (
+              <View style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: live.g.state === 'in' ? C.red : C.border, gap: 6 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Text style={{ color: C.text, fontWeight: '800' }}>{live.g.state === 'in' ? '🔴 Live now' : '✅ Final'} · {live.g.away} {live.g.as} @ {live.g.home} {live.g.hs}</Text>
+                  <Text style={{ color: C.dim, fontSize: 11 }}>{live.g.state === 'in' ? live.g.detail || `Q${live.g.period} ${live.g.clock}` : 'Wk ' + b.week}</Text>
+                </View>
+                {!live.line ? <Text style={T.sub}>No stats for him in this game yet.</Text> : (
+                  <>
+                    <View style={{ flexDirection: 'row', alignItems: 'baseline', gap: 8 }}>
+                      <Text style={{ color: C.mint, fontSize: 26, fontWeight: '900' }}>{fmt(live.line.pts, 2)}</Text>
+                      <Text style={T.sub}>fantasy pts{!b.isPast ? ` (proj ${fmt(projOf(b, id))})` : ''}</Text>
+                    </View>
+                    {live.line.rows.map(r => (
+                      <View key={r.label} style={{ flexDirection: 'row', justifyContent: 'space-between', gap: 10 }}>
+                        <Text style={{ color: C.sub, fontSize: 12.5, flex: 1 }}><Text style={{ color: C.text, fontWeight: '700' }}>{r.label}</Text>{r.text ? `  ${r.text}` : ''}</Text>
+                        <Text style={{ color: r.pts < 0 ? C.red : C.text, fontSize: 12.5, fontWeight: '800' }}>{r.pts > 0 ? '+' : ''}{fmt(r.pts, 2)}</Text>
+                      </View>
+                    ))}
+                    <Text style={{ color: C.dim, fontSize: 10.5 }}>Points use your league's scoring. Stats from Sleeper{live.g.state === 'in' ? ', refreshed every 25 seconds while the game is on' : ''}.</Text>
+                  </>
+                )}
+              </View>
+            ) : null}
             {owner?.rid === b.me.rid && !b.isPast ? (
               <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}><Text style={{ color: C.sub, fontSize: 12 }}>Trade tag</Text><TagChips id={id} /></View>
             ) : null}
@@ -108,29 +141,6 @@ export default function PlayerSheet({ id, onClose }: { id: string | null; onClos
               )}
             </View>
             <NewsCard id={id} />
-            <Pressable onPress={() => Linking.openURL(ytSearch(`${name} fantasy football week ${b.week}`))} style={{ backgroundColor: '#FF3D5A', borderRadius: 14, padding: 13, alignItems: 'center' }}>
-              <Text style={{ color: '#fff', fontWeight: '800', fontSize: 15 }}>▶  Watch {name} videos</Text>
-            </Pressable>
-            <View style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.border, gap: 8 }}>
-              <Text style={{ color: C.text, fontWeight: '700' }}>🎬 Creator takes</Text>
-              {show.map(v => (
-                <Pressable key={v.url} onPress={() => Linking.openURL(v.url)} style={{ flexDirection: 'row', gap: 10, alignItems: 'center' }}>
-                  {v.thumb ? <Image source={{ uri: v.thumb }} style={{ width: 96, height: 54, borderRadius: 8, backgroundColor: C.card2 }} /> : null}
-                  <View style={{ flex: 1 }}><Text style={{ color: C.text, fontSize: 12.5 }} numberOfLines={2}>{v.title}</Text><Text style={{ color: C.dim, fontSize: 11 }}>{v.channel}</Text></View>
-                </Pressable>
-              ))}
-              {vids === null ? <Text style={T.sub}>Checking creator feeds…</Text> : !show.length ? <Text style={T.sub}>No recent creator videos mention {name.split(' ').slice(-1)[0]}. Search a creator:</Text> : null}
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>
-                {SEARCH.map(c => (
-                  <Pressable key={c.name} onPress={() => Linking.openURL(ytSearch(`${c.q} ${name}`))} style={{ borderRadius: 14, borderWidth: 1, borderColor: C.magenta + '99', paddingHorizontal: 10, paddingVertical: 6 }}>
-                    <Text style={{ color: C.magenta, fontSize: 11.5, fontWeight: '700' }}>{c.name}</Text>
-                  </Pressable>
-                ))}
-              </View>
-              <Pressable onPress={() => { onClose(); openVideos(); }} hitSlop={6} style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', borderTopWidth: 1, borderTopColor: C.border, paddingTop: 9, marginTop: 2 }}>
-                <Text style={{ color: C.text, fontWeight: '700', fontSize: 13 }}>🎬 Videos: all creator feeds</Text><Text style={{ color: C.mint, fontWeight: '800' }}>›</Text>
-              </Pressable>
-            </View>
           </ScrollView>
         </View>
       </View>

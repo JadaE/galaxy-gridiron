@@ -23,6 +23,11 @@ export const FLEX_ELIG: Record<string, string[]> = {
   QB: ['QB'], RB: ['RB'], WR: ['WR'], TE: ['TE'], K: ['K'], DEF: ['DEF'],
   FLEX: ['RB', 'WR', 'TE'], WRRB_FLEX: ['RB', 'WR'], REC_FLEX: ['WR', 'TE'], SUPER_FLEX: ['QB', 'RB', 'WR', 'TE'],
 };
+/** v0.0.10: can this position ever start from the bench through a flex slot in THIS league? In a 1-QB league
+ * (no SUPER_FLEX) a backup QB, K or DEF only plays on a bye/injury week, so his bench value is a fraction of his points. */
+export const flexable = (slots: string[], pos: string) => slots.some(s => s !== pos && (FLEX_ELIG[s] || []).includes(pos));
+export const BENCH_ONLY_W = 0.2;
+export const benchWorth = (b: { slots: string[] }, pos: string) => (flexable(b.slots, pos) ? 1 : BENCH_ONLY_W);
 export const slotLabel = (s: string) => ({ WRRB_FLEX: 'W/R', REC_FLEX: 'W/T', SUPER_FLEX: 'SF', FLEX: 'FLEX' } as any)[s] || s;
 const BAD = new Set(['IR', 'Out', 'NA', 'Sus', 'PUP', 'DNR', 'COV']);
 export const isOut = (inj?: string) => !!inj && BAD.has(inj);
@@ -111,7 +116,7 @@ export async function loadBundle(leagueId: string, userId: string, force = false
     isPast ? Promise.resolve({}) : (league.scoring_settings ? stats.projectionsLeague(season, week, leagueId, league.scoring_settings, force) : stats.projections(season, week, force)).catch(() => stats.projections(season, week).catch(() => ({}))),
     stats.season(season, force).catch(() => ({})),
     isPast ? Promise.resolve([]) : sleeper.trending(force).catch(() => []),
-    isPast ? Promise.resolve(null) : fantasyCalc(numTeams, rec >= 0.75 ? 1 : rec >= 0.25 ? 0.5 : 0, force).catch(() => null),
+    isPast ? Promise.resolve(null) : fantasyCalc(numTeams, rec >= 0.75 ? 1 : rec >= 0.25 ? 0.5 : 0, force, (league.roster_positions || []).includes('SUPER_FLEX') ? 2 : 1).catch(() => null),
     Promise.all(legs.map(l => sleeper.transactions(leagueId, l, force && l >= leg - 1).catch(() => []))),
   ]);
   const statWeeks = isPast ? [] : Array.from({ length: lastScored }, (_, i) => i + 1);

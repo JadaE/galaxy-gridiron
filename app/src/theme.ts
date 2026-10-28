@@ -16,6 +16,8 @@ export const C = {
   red: '#FF5C7A',
   green: '#3DDC97',
   orange: '#FF9F43',
+  /** v0.0.10: Picks "your pick" color, so it doesn't look like the green ✓ WIN */
+  banana: '#FFE135',
 };
 export const POS_COLOR: Record<string, string> = {
   QB: '#FF5F8F', RB: '#2FE0B5', WR: '#56B4FF', TE: '#FFA94D', K: '#C7A8FF', DEF: '#B4BDD9', FLEX: '#8E8CFF',
