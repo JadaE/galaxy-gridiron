@@ -40,7 +40,7 @@ server.listen(0, async () => {
   await t('pair stores token; isPaired true', async () => { await ai.pair(base, 'galaxy-123'); assert.equal(await ai.isPaired(), true); });
   await t('usage shape', async () => { const u = await ai.usage(); assert.equal(u.monthCapUsd, 5); assert.equal(u.dailyLimit, 3); assert.equal(u.dailyCount, 0); });
   await t('chat ok returns reply, cost, usage, model', async () => {
-    const r = await ai.chat('budget', [{ role: 'user', content: 'Wilson or Pitts?' }], { league: { name: 'Moments Gang' } });
+    const r = await ai.chat('budget', [{ role: 'user', content: 'Wilson or Pitts?' }], { league: { name: 'Mock League Beta' } });
     assert.equal(r.reply, 'Start Wilson. (stub reply)'); assert.ok(r.costUsd > 0); assert.equal(r.dailyCount, 1); assert.equal(r.model, 'gpt-6-luna');
     assert.equal(lastUpstreamBody.model, 'gpt-6-luna'); assert.ok(!JSON.stringify(lastUpstreamBody).includes('gg_'), 'device token must not reach the model');
   });

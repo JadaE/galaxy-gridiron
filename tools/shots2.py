@@ -7,14 +7,14 @@ from playwright.async_api import async_playwright
 OUT=_ROOT+'/screenshots/v0.0.2'
 MG=_S['leagues']['mg']; FS=_S['leagues']['fs']
 SHOTS=[
- ('01-team-fam-slam-grade', f'tab=Team&league={FS}'),
- ('02-team-moments-gang', f'tab=Team&league={MG}'),
+ ('01-team-mock-league-alpha-grade', f'tab=Team&league={FS}'),
+ ('02-team-mock-league-beta', f'tab=Team&league={MG}'),
  ('03-matchup-report-card-w6', f'tab=Matchup&league={MG}&week=6'),
- ('04-league-path-top3-fam-slam', f'tab=League&league={FS}'),
- ('04b-league-path-top3-moments-gang', f'tab=League&league={MG}'),
+ ('04-league-path-top3-mock-league-alpha', f'tab=League&league={FS}'),
+ ('04b-league-path-top3-mock-league-beta', f'tab=League&league={MG}'),
  ('05-waivers-drop-safety', f'tab=Waivers&league={MG}'),
  ('06-trades-ideas-tags', f'tab=Trades&league={FS}'),
- ('06b-trades-moments-gang', f'tab=Trades&league={MG}'),
+ ('06b-trades-mock-league-beta', f'tab=Trades&league={MG}'),
  ('07-videos', f'tab=Videos&league={FS}'),
  ('08-chat-compare', f'tab=Team&league={MG}&ask=Wilson%20or%20Pitts%20Sr'),
  ('08b-chat-pickup', f'tab=Team&league={MG}&ask=should%20I%20pick%20up%20pitts'),

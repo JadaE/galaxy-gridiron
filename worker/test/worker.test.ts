@@ -37,7 +37,7 @@ async function pairDevice(name = "Test Pixel") {
   return ((await r.json()) as any).deviceToken as string;
 }
 
-const chatBody = (tier = "budget") => ({ tier, messages: [{ role: "user", content: "Wilson or Pitts Sr?" }], context: { team: "Fam Slam" } });
+const chatBody = (tier = "budget") => ({ tier, messages: [{ role: "user", content: "Wilson or Pitts Sr?" }], context: { team: "Mock League Alpha" } });
 
 beforeEach(() => {
   kv = new MemKV();
@@ -144,7 +144,7 @@ describe("POST /chat", () => {
     expect(sent.store).toBe(false);
     expect(sent.instructions).toMatch(/READ-ONLY advisor/);
     expect(sent.input[0].role).toBe("developer");
-    expect(sent.input[0].content).toContain("Fam Slam");
+    expect(sent.input[0].content).toContain("Mock League Alpha");
     expect(sent.input.at(-1)).toEqual({ role: "user", content: "Wilson or Pitts Sr?" });
   });
 
