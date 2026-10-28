@@ -8,6 +8,7 @@ cfg() { jq -r "$1" "$CFG"; }
 PUB=$(cfg '.publishSiteDir // empty'); PUB=${PUB:-$FF/publish-site}  # staging dir uploaded to here.now (keep it persistent: it holds every version folder)
 P=$(cfg .pwaSecretPath); SLUG=$(cfg .siteSlug); OUT=$FF/dist-web; D=$PUB/$P
 VN=$(jq -r .expo.version $FF/app/app.json); VC=$(jq -r .expo.android.versionCode $FF/app/app.json)
+bash $FF/tools/gen-appconfig.sh  # bundle ONLY the 4 public config keys; pwaSecretPath is injected below as the base URL only
 cd $FF/app && rm -rf $OUT && PWA_BASE=/$P EXPO_PUBLIC_PWA_BASE=/$P npx expo export --platform web --output-dir $OUT >/tmp/pwa-export.log 2>&1 || { tail -20 /tmp/pwa-export.log; exit 1; }
 grep -q "/$P" $OUT/_expo/static/js/web/index-*.js || { echo "PWA base not inlined" >&2; exit 1; }
 PYBIN=$FF/.venv-shots/bin/python; [ -x "$PYBIN" ] || PYBIN=python3
@@ -38,10 +39,12 @@ head=f'''<meta name="robots" content="noindex,nofollow" />
 s=s.replace('<title>',head,1)
 open(p,'w').write(s)
 PY
-rm -rf $D && mkdir -p $D && cp -r $OUT/. $D/
-cat > $D/pwa-version.json <<J
+cat > $OUT/pwa-version.json <<J
 {"versionCode": $VC, "versionName": "$VN", "apkUrl": "https://$SLUG.here.now/$P/", "notes": $(jq -Rn --arg n "${NOTES:-}" '$n')}
 J
+# fail before staging if any private config value (other than this PWA's own base path) is in the build
+bash $FF/tools/leak-check.sh pwa $OUT "$CFG" || { echo "PWA leak check failed: not staging" >&2; exit 1; }
+rm -rf $D && mkdir -p $D && cp -r $OUT/. $D/
 # same-site read-only relay (here.now proxy routes): fixed upstreams = host allowlist, GET only, no secrets
 mkdir -p $PUB/.herenow
 cat > $PUB/.herenow/proxy.json <<J

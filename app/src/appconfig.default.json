@@ -1,0 +1,6 @@
+{
+  "siteSlug": "YOUR-SITE-SLUG",
+  "updateChannelPath": "YOUR_UPDATE_CHANNEL_PATH",
+  "picksCollection": "YOUR_COLLECTION_ID",
+  "feedbackCollection": "YOUR_COLLECTION_ID"
+}

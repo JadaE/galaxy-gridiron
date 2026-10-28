@@ -1,5 +1,6 @@
 # secrets / local config (never commit)
 config.local.json
+app/src/appconfig.generated.json
 keys/
 .herenow/
 *.keystore
