@@ -1,0 +1,24 @@
+{
+  "siteSlug": "YOUR-SITE-SLUG",
+  "updateChannelPath": "YOUR_UPDATE_CHANNEL_PATH",
+  "picksCollection": "YOUR_COLLECTION_ID",
+  "feedbackCollection": "YOUR_COLLECTION_ID",
+  "pwaSecretPath": "YOUR_SECRET_PATH",
+  "publishPaths": {
+    "v001": "YOUR_SECRET_PATH",
+    "v002": "YOUR_SECRET_PATH"
+  },
+  "keystorePassword": "YOUR_KEYSTORE_PASSWORD",
+  "neverPublishTo": [],
+  "sleeper": {
+    "username": "YOUR_SLEEPER_USERNAME",
+    "userId": "1000000000000000006",
+    "leagues": {
+      "mg": "1000000000000000010",
+      "fs": "1000000000000000013",
+      "past": "1000000000000000002"
+    },
+    "iphoneTestUsername": "YOUR_TEST_USERNAME"
+  },
+  "publishSiteDir": ""
+}

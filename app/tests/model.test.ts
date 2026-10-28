@@ -1,16 +1,16 @@
 // Run: npx tsx tests/model.test.ts  (live public Sleeper/FantasyCalc data, read-only)
+import { SLP } from './live-ids';
 import assert from 'node:assert/strict';
 import { loadBundle, val, valueSource, hasProj, projOf, pname } from '../src/model';
 import { rosterFit } from '../src/fit';
 import { tradeIdeas, MAX_GIVE_USES } from '../src/trades';
 import { rules } from '../src/chat/engine';
 import { buildContext, CONTEXT_MAX } from '../src/ai/context';
-const UID = (process.env.GG_USER_ID || '1000000000000000001');
+const UID = SLP.userId;
 let pass = 0, fail = 0;
 const t = (n: string, f: () => void) => { try { f(); pass++; console.log('  ✓', n); } catch (e: any) { fail++; console.log('  ✗', n, '\n     ', e.message); } };
 (async () => {
-  if (!process.env.GG_USER_ID || !process.env.GG_LEAGUE_FS || !process.env.GG_LEAGUE_MG) { console.log('SKIP: live Sleeper test. Set GG_USER_ID, GG_LEAGUE_FS and GG_LEAGUE_MG (your Sleeper user id and two league ids) to run it.'); return; }
-  for (const lid of [(process.env.GG_LEAGUE_FS || '2000000000000000002'), (process.env.GG_LEAGUE_MG || '2000000000000000001')]) {
+  for (const lid of [SLP.leagues.fs, SLP.leagues.mg]) {
     const b = await loadBundle(lid, UID);
     console.log(b.league.name);
     const ids = b.me.players.filter(id => !b.me.reserve.includes(id));
@@ -29,7 +29,7 @@ const t = (n: string, f: () => void) => { try { f(); pass++; console.log('  ✓'
     t('💎 high-value players only offered for ≥115% of market', () => { const tags: any = {}; ids.forEach(id => (tags[id] = 'high')); tradeIdeas(b, tags, 10).ideas.forEach(i => assert.ok(i.getV >= i.giveV * 1.15 - 1, `${i.getV} vs ${i.giveV}`)); });
     t('AI context under 6 KB', () => { const c = buildContext(b, {}, { mentioned: ids.slice(0, 3) }); assert.ok(JSON.stringify(c).length <= CONTEXT_MAX); });
   }
-  const mg = await loadBundle((process.env.GG_LEAGUE_MG || '2000000000000000001'), UID);
+  const mg = await loadBundle(SLP.leagues.mg, UID);
   const r = await rules.answer('Wilson or Pitts Sr', { b: mg, tags: {} });
   t("rules 'Wilson or Pitts Sr' includes fit %", () => { assert.ok(r.fit); assert.equal(r.fit!.aPct + r.fit!.bPct, 100); assert.match(r.text, /Roster fit: .* \d+% vs .* \d+%/); });
   for (const q of ['Vikings or Texans?', 'Caleb Williams or Bryce Young?']) {

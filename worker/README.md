@@ -13,6 +13,6 @@ npm test             # unit tests
 npm run typecheck
 npm run check        # typecheck + tests + wrangler dry-run bundle (needs Node >= 22)
 ```
-Secrets are set only with `npx wrangler secret put OPENAI_API_KEY` and `npx wrangler secret put PAIRING_CODE`. Never put them in files.
+Secrets are set only with `npx wrangler secret put OPENAI_API_KEY` and `npx wrangler secret put PAIRING_CODE`. Never put them in files. For the iPhone web app also set `npx wrangler secret put ALLOWED_ORIGINS` (the site origin, e.g. `https://<site-slug>.here.now`; comma-separate several). Without it, browser (CORS) requests are refused; native apps are unaffected.
 Config (`wrangler.toml [vars]`): `MONTH_CAP_USD`=5, `DAILY_LIMIT`=30, `MAX_DEVICES`=5, `TIMEZONE`, `BUDGET_MODEL`, `BETTER_MODEL`.
 Free plan: 100k requests/day; KV free tier is 1,000 writes/day (each chat uses 2 writes).

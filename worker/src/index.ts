@@ -6,6 +6,9 @@ export interface Env {
   // Secrets (set ONLY with `wrangler secret put`):
   OPENAI_API_KEY?: string;
   PAIRING_CODE?: string;
+  // Comma-separated browser origins allowed by CORS (the iPhone web app's site), e.g. https://<slug>.here.now.
+  // Set with `wrangler secret put ALLOWED_ORIGINS`. Not in the repo.
+  ALLOWED_ORIGINS?: string;
   // Plain config vars (wrangler.toml [vars]):
   MONTH_CAP_USD?: string;
   DAILY_LIMIT?: string;
@@ -341,12 +344,14 @@ export async function handle(req: Request, env: Env, now = new Date()): Promise<
   }
 }
 
-// v0.0.6: the iPhone web app runs in Safari, which needs CORS. Only the owner's own here.now site is allowed.
+// v0.0.6: the iPhone web app runs in Safari, which needs CORS. Only the origins in env.ALLOWED_ORIGINS are allowed.
 // Native apps send no Origin and are unaffected. Pairing/bearer auth is unchanged.
-export const CORS_ORIGINS = new Set(["https://YOUR-SITE-SLUG.here.now"]);
-function withCors(req: Request, res: Response): Response {
+export function corsOrigins(env: Env): Set<string> {
+  return new Set((env.ALLOWED_ORIGINS || "").split(",").map((x) => x.trim()).filter(Boolean));
+}
+function withCors(req: Request, res: Response, env: Env): Response {
   const o = req.headers.get("origin");
-  if (!o || !CORS_ORIGINS.has(o)) return res;
+  if (!o || !corsOrigins(env).has(o)) return res;
   const h = new Headers(res.headers);
   h.set("access-control-allow-origin", o);
   h.set("vary", "origin");
@@ -356,9 +361,9 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const o = req.headers.get("origin");
     if (req.method === "OPTIONS") {
-      if (!o || !CORS_ORIGINS.has(o)) return new Response(null, { status: 403 });
+      if (!o || !corsOrigins(env).has(o)) return new Response(null, { status: 403 });
       return new Response(null, { status: 204, headers: { "access-control-allow-origin": o, "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", "access-control-allow-headers": "authorization, content-type", "access-control-max-age": "86400", vary: "origin" } });
     }
-    return withCors(req, await handle(req, env));
+    return withCors(req, await handle(req, env), env);
   },
 } satisfies ExportedHandler<Env>;

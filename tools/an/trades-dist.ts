@@ -1,8 +1,9 @@
+import { UID, MG, FS } from './ids';
 import { loadBundle, pname, ppos } from '../../app/src/model';
 import { tradeIdeas } from '../../app/src/trades';
-const UID=(process.env.GG_USER_ID || '1000000000000000001');
+
 (async()=>{
- for (const lid of [(process.env.GG_LEAGUE_FS || '2000000000000000002'),(process.env.GG_LEAGUE_MG || '2000000000000000001')]) {
+ for (const lid of [FS,MG]) {
   const b = await loadBundle(lid, UID);
   const { ideas, mine } = tradeIdeas(b, {}, 10);
   console.log('\n==', b.league.name, 'week', b.week, 'teams', b.teams.length, 'slots', b.slots.join(','));

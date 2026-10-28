@@ -1,11 +1,15 @@
 # v0.0.5 headless screenshots: react-native-web at a phone viewport with SIMULATED Android nav-bar insets.
 # ?inset=48 = 3-button nav (48dp), ?inset=24 = gesture nav (24dp). A translucent fake nav bar is drawn over the
 # bottom inset so you can see that nothing interactive sits under it. Real device insets come from the OS.
+import os, json as _json
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+_C = _json.load(open(_ROOT + '/app/config.local.json'))  # real values live only in the gitignored config
+_S = _C['sleeper']
 import asyncio, sys, os, json, urllib.request
 from playwright.async_api import async_playwright
 from PIL import Image
-OUT='/workspace/fantasy-football/screenshots/v0.0.5'
-MG=os.environ.get('GG_LEAGUE_MG','2000000000000000001'); FS=os.environ.get('GG_LEAGUE_FS','2000000000000000002')
+OUT=_ROOT+'/screenshots/v0.0.5'
+MG=_S['leagues']['mg']; FS=_S['leagues']['fs']
 HER="What's some good trades that don't involve high worth or locked players?"
 from urllib.parse import quote
 TAGS={MG: {'10213':'never','11435':'high','11560':'high'}}
@@ -43,12 +47,12 @@ async def main():
     await ctx.route('https://site.api.espn.com/**', espn)
     page=await ctx.new_page(); errs=[]
     page.on('pageerror', lambda e: errs.append(str(e)))
-    await page.goto('http://localhost:8081/?auto=1&user=demo_user&rssproxy=1', wait_until='networkidle', timeout=300000)
+    await page.goto('http://localhost:8081/?auto=1&user='+_S['username']+'&rssproxy=1', wait_until='networkidle', timeout=300000)
     await page.wait_for_timeout(6000)
     for name,q,inset in SHOTS:
       if only and not any(o in name for o in only): continue
       await page.evaluate("(t)=>{for(const l in t)localStorage.setItem('ggs:tags:'+l, JSON.stringify(t[l]));localStorage.setItem('ggs:upd:dismissed','99')}", TAGS)
-      await page.goto('http://localhost:8081/?auto=1&user=demo_user&rssproxy=1&'+q, wait_until='networkidle', timeout=180000)
+      await page.goto('http://localhost:8081/?auto=1&user='+_S['username']+'&rssproxy=1&'+q, wait_until='networkidle', timeout=180000)
       await page.wait_for_timeout(9000)
       if 'type=' in q:  # type it like she did (tags are loaded by then)
         from urllib.parse import unquote

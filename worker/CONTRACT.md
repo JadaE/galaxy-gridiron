@@ -1,6 +1,6 @@
 # Galaxy Gridiron AI proxy: API contract (v1)
 
-Base URL: the Worker URL the owner enters in **Settings > AI**, e.g. `https://galaxy-gridiron-ai.<your-subdomain>.workers.dev`.
+Base URL: the Worker URL the owner enters in **Settings > AI**, e.g. `https://galaxy-gridiron-ai.<her-subdomain>.workers.dev`.
 All bodies are JSON (`content-type: application/json`). All responses are JSON with `cache-control: no-store`.
 The Worker is a **read-only advisor**: it never touches Sleeper, and the app never holds an AI key.
 

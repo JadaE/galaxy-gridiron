@@ -4,13 +4,13 @@ import fs from 'node:fs';
 import { NameIndex, normalize, lev } from '../src/chat/names';
 import { parse } from '../src/chat/intents';
 
-const all = JSON.parse(fs.readFileSync(process.env.GG_PLAYERS_JSON || __dirname + '/../../data/players_nfl.json', 'utf8'));
+const all = JSON.parse(fs.readFileSync('/workspace/fantasy-football/data/players_nfl.json', 'utf8'));
 import { slimPlayers } from '../src/api';
 const players: Record<string, any> = slimPlayers(all); // same filter the app uses (v0.0.5 junk rules)
 const proj: Record<string, number> = JSON.parse(fs.readFileSync(__dirname + '/fixture_proj_w7.json', 'utf8'));
 const MG = JSON.parse(fs.readFileSync(__dirname + '/fixture_rosters_mg.json', 'utf8'));
 const FS = JSON.parse(fs.readFileSync(__dirname + '/fixture_rosters_fs.json', 'utf8'));
-const UID = '1000000000000000001';
+const UID = '1000000000000000007';
 function indexFor(rosters: any[]) {
   const mine = new Set<string>(rosters.find(r => r.owner_id === UID).players);
   const rostered = new Set<string>(rosters.flatMap(r => r.players || []));
@@ -29,7 +29,7 @@ t('suffix + punctuation', () => assert.equal(normalize("Kyle Pitts Sr."), 'kyle 
 t('apostrophes & hyphens', () => assert.equal(normalize("Ja'Marr Chase / Smith-Njigba"), 'jamarr chase smith njigba'));
 t('levenshtein', () => { assert.equal(lev('mccaffery', 'mccaffrey'), 1); assert.equal(lev('pits', 'pitts'), 1); });
 
-console.log('parser: Moments Gang context');
+console.log('parser: Mock League Beta context');
 t("'Wilson or Pitts Sr' -> compare Emanuel Wilson (hers) vs Kyle Pitts", () => {
   const p = parse('Wilson or Pitts Sr', mg); assert.equal(p.intent, 'compare'); assert.deepEqual(best(mg, 'Wilson or Pitts Sr'), ['Emanuel Wilson', 'Kyle Pitts']);
 });
@@ -57,14 +57,14 @@ t("generic intents untouched", () => {
   assert.equal(parse('Who am I playing?', mg).intent, 'matchup');
   assert.equal(parse('any trade ideas for me', mg).intent, 'trade_ideas');
 });
-console.log('parser: Fam Slam context');
-t("'Wilson or Pitts Sr' in Fam Slam (Michael Wilson dropped 10/21) -> most relevant Wilson or a 'did you mean' prompt", () => {
+console.log('parser: Mock League Alpha context');
+t("'Wilson or Pitts Sr' in Mock League Alpha (Michael Wilson dropped 10/21) -> most relevant Wilson or a 'did you mean' prompt", () => {
   const p = parse('Wilson or Pitts Sr', fs_);
   assert.equal(nameOf(p.mentions[1].best), 'Kyle Pitts');
   const w = p.mentions[0];
   assert.ok(w.ambiguous || nameOf(w.best) === 'Garrett Wilson', 'got ' + nameOf(w.best));
 });
-t("'Tucker' in Fam Slam (not hers) still finds Tre Tucker", () => assert.equal(best(fs_, 'tucker?')[0], 'Tre Tucker'));
+t("'Tucker' in Mock League Alpha (not hers) still finds Tre Tucker", () => assert.equal(best(fs_, 'tucker?')[0], 'Tre Tucker'));
 t("'Gibbs or Achane'", () => assert.deepEqual(best(fs_, 'Gibbs or Achane'), ["Jahmyr Gibbs", "De'Von Achane"]));
 t("typo 'jusitn jefferson'", () => assert.equal(best(fs_, 'jusitn jefferson')[0], 'Justin Jefferson'));
 t("typo 'Pits vs Likely'", () => assert.deepEqual(best(fs_, 'Pits vs Likely'), ['Kyle Pitts', 'Isaiah Likely']));

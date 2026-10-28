@@ -8,10 +8,11 @@
 //    created before kickoff. Snapshots that arrive after kickoff don't change a pick (backfilled picks are
 //    flagged and only count when "Include backfilled" is on).
 import { saveSetting, loadSetting } from '../api';
+import { SITE_ORIGIN, PICKS_COLLECTION } from '../config';
 import { Game, Pick, PickMap } from './core';
 
-export const SITE = 'https://YOUR-SITE-SLUG.here.now';
-export const COLLECTION = 'YOUR_COLLECTION_ID';
+export const SITE = SITE_ORIGIN;
+export const COLLECTION = PICKS_COLLECTION;
 const BASE = `${SITE}/.herenow/data/${COLLECTION}`;
 const APP = 'gg';
 

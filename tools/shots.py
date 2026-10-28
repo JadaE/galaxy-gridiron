@@ -1,14 +1,18 @@
-import asyncio, sys, os
+import os, json as _json
+_ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+_C = _json.load(open(_ROOT + '/app/config.local.json'))  # real values live only in the gitignored config
+_S = _C['sleeper']
+import asyncio, sys
 from playwright.async_api import async_playwright
-OUT='/workspace/fantasy-football/screenshots'
-MG=os.environ.get('GG_LEAGUE_MG','2000000000000000001'); FS=os.environ.get('GG_LEAGUE_FS','2000000000000000002'); PAST=os.environ.get('GG_LEAGUE_PAST','2000000000000000003')
+OUT=_ROOT+'/screenshots'
+MG=_S['leagues']['mg']; FS=_S['leagues']['fs']; PAST=_S['leagues']['past']
 SHOTS=[
- ('01-team-fam-slam', f'tab=Team&league={FS}', None),
- ('02-team-moments-gang-alerts', f'tab=Team&league={MG}', None),
+ ('01-team-mock-league-alpha', f'tab=Team&league={FS}', None),
+ ('02-team-mock-league-beta-alerts', f'tab=Team&league={MG}', None),
  ('03-matchup', f'tab=Matchup&league={FS}', None),
  ('04-league', f'tab=League&league={MG}', None),
  ('05-waivers', f'tab=Waivers&league={MG}', None),
- ('05b-waivers-fam-slam', f'tab=Waivers&league={FS}', None),
+ ('05b-waivers-mock-league-alpha', f'tab=Waivers&league={FS}', None),
  ('06-trades', f'tab=Trades&league={FS}', None),
  ('07-chat', f'tab=Chat&league={MG}&ask=Who%20should%20I%20start%3F', None),
  ('08-player-sheet', f'tab=Team&league={FS}&player=9509', None),

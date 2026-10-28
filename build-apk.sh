@@ -3,7 +3,10 @@
 set -euo pipefail
 export JAVA_HOME=$HOME/jdk17 ANDROID_HOME=$HOME/android-sdk
 export PATH=$JAVA_HOME/bin:$ANDROID_HOME/platform-tools:$PATH
-APP=/workspace/fantasy-football/app
+ROOT=$(cd "$(dirname "$0")" && pwd); CFG=$ROOT/app/config.local.json
+[ -f "$CFG" ] || { echo "missing app/config.local.json (copy app/config.example.json and fill it in)" >&2; exit 1; }
+cfg() { jq -r "$1" "$CFG"; }
+APP=$ROOT/app
 cd $APP
 # version guard: app.json and src/version.ts must agree
 AJ=$(node -e "const a=require('./app.json').expo;console.log(a.version+':'+a.android.versionCode)")
@@ -35,15 +38,15 @@ s=s[:j]+"signingConfig signingConfigs.release"+s[j+len("signingConfig signingCon
 open(p,'w').write(s)
 PY
 fi
-export GG_KEYSTORE=/workspace/fantasy-football/keys/galaxy-gridiron.keystore
-export GG_KEYPASS=$(cat /workspace/fantasy-football/keys/keystore-password.txt)
+export GG_KEYSTORE=$ROOT/keys/galaxy-gridiron.keystore
+export GG_KEYPASS=$(cfg .keystorePassword)
 cd android
 ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m" --max-workers=4 --no-daemon
 OUT=app/build/outputs/apk/release/app-release.apk
-mkdir -p /workspace/fantasy-football/dist
+mkdir -p $ROOT/dist
 # verify what actually got built before publishing
 BADGE=$($(ls -d $ANDROID_HOME/build-tools/* | tail -1)/aapt2 dump badging $OUT | awk "NR==1")
 echo "$BADGE" | grep -q "versionCode='${AJ##*:}' versionName='${AJ%%:*}'" || { echo "APK version mismatch: $BADGE" >&2; exit 1; }
-cp $OUT /workspace/fantasy-football/dist/GalaxyGridiron-v${GG_VERSION}.apk
-ls -la /workspace/fantasy-football/dist
+cp $OUT $ROOT/dist/GalaxyGridiron-v${GG_VERSION}.apk
+ls -la $ROOT/dist
 echo BUILD_OK

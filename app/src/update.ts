@@ -4,9 +4,10 @@ import { Platform, Linking } from 'react-native';
 import { VERSION_CODE } from './version';
 import { saveSetting, loadSetting, HOUR } from './api';
 import { isHostedPwa, PWA_BASE } from './web';
+import { SITE_ORIGIN, UPDATE_CHANNEL_PATH } from './config';
 
-export const UPDATE_URL = 'https://YOUR-SITE-SLUG.here.now/YOUR_UPDATE_CHANNEL_PATH/version.json';
-const SITE = 'https://YOUR-SITE-SLUG.here.now/';
+export const UPDATE_URL = `${SITE_ORIGIN}/${UPDATE_CHANNEL_PATH}/version.json`;
+const SITE = `${SITE_ORIGIN}/`;
 export type UpdateInfo = { versionCode: number; versionName: string; apkUrl: string; notes: string };
 // web screenshots only: ?updurl=<local json> overrides the channel
 const qpUrl = Platform.OS === 'web' && typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('updurl') : null;
