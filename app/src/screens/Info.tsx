@@ -4,7 +4,7 @@ import { View, Text, Modal, ScrollView, Pressable } from 'react-native';
 import { C } from '../theme';
 import { useInsets } from '../safe';
 
-export type InfoKey = 'team' | 'matchup' | 'league' | 'waivers' | 'trades' | 'picks' | 'chat' | 'player';
+export type InfoKey = 'team' | 'matchup' | 'league' | 'waivers' | 'trades' | 'picks' | 'picksboard' | 'chat' | 'player';
 type Sec = [string, string];
 const COMMON: Sec[] = [
   ['Proj', "Sleeper's own projection for this week, scored with your league's settings. The same number you see next to a player in Sleeper's Match screen."],
@@ -20,7 +20,7 @@ const PAGES: Record<InfoKey, { title: string; secs: Sec[] }> = {
     ['Lineup IQ', "Your points for divided by Sleeper's max points (what your best possible lineup would have scored, in hindsight). 100% means you started the right players every week."],
     ['Lineup alerts', "Problems with this week's lineup: empty slots, players on bye or ruled out, and Questionable tags with the latest practice report. Totals add up your starters' Sleeper projections, the way Sleeper's Match screen does."],
     ['Week report card (A+ to F)', "Last week's grade. Half is your score vs the league median, 30% is how close you got to your best possible lineup (\"left on bench\" = points you could have added), and 20% is how you did vs your Sleeper projection."],
-    ['Weekly scores', 'Your score each week against the league average.'],
+    ['Weekly scores', 'Your score each week against your opponent and the league average (dashed line). This is the only weekly-score chart; the League page no longer repeats it.'],
     ["Who's carried you", 'Total points each player has scored for you while in your starting lineup. Gray bars are players no longer on your team.'],
     ...COMMON,
   ] },
@@ -35,7 +35,6 @@ const PAGES: Record<InfoKey, { title: string; secs: Sec[] }> = {
   league: { title: 'League page', secs: [
     ['Standings', "Same as Sleeper's: wins, then points for."],
     ['Power ranking (all-play)', 'Your record if you had played every team every week. It measures how good your scores were, apart from schedule luck.'],
-    ['You vs the league average', 'Your starters at each position compared with the average team in your league.'],
     ['Path to the top 3', 'Odds from simulating the rest of the schedule with each team\'s current strength. A guide, not a guarantee.'],
   ] },
   waivers: { title: 'Waivers page', secs: [
@@ -55,6 +54,13 @@ const PAGES: Record<InfoKey, { title: string; secs: Sec[] }> = {
   picks: { title: 'Picks page', secs: [
     ['Record and chart', 'Your pick\'em record by week. The gold line is your season win %. Games are graded from ESPN\'s public final scores.'],
     ['Leaderboard', "Honor system, by Sleeper username. Other players' picks stay hidden until that game kicks off."],
+  ] },
+  picksboard: { title: 'How the leaderboard works', secs: [
+    ['Grading', "Graded on each phone from ESPN's public scores. Ties and postponed games are no result."],
+    ['Kickoff lock', 'A pick counts if it reached the shared board before kickoff (server timestamp). Changes after kickoff are ignored ("late").'],
+    ['Honor system', "The board is readable by anyone with the app's link, so hiding other picks until kickoff happens in the app, not on the server. No logins, no passwords."],
+    ['Your record', 'Your own record always comes from the picks on this phone.'],
+    ['Picks by week', 'Newest week first. Swipe the grid sideways for older weeks; names stay put on the left. Gold = best record that week.'],
   ] },
   chat: { title: 'Ask Gridiron', secs: [
     ['"X or Y?"', "During the season this means who to start THIS week. The answer uses Sleeper's projection for this week, plus the Vegas line, the opponent, kickoff time and injury or practice news. Ask about \"rest of season\" or \"roster fit\" to compare them long term."],

@@ -28,7 +28,7 @@ const Chip = ({ t, c }: { t: string; c: string }) => <View style={{ borderRadius
 
 export function steps(web: boolean, signup = false): Step[] {
   const all: Step[] = [
-    { emoji: '🪐', title: 'Welcome to Galaxy Gridiron', body: 'Your Sleeper leagues at a glance. Six tabs along the bottom; the 💬 button asks the chat anything about your team. Tap any player for his card, news and videos.', art: <TabArt /> },
+    { emoji: '🪐', title: 'Welcome to Galaxy Gridiron', body: 'Your Sleeper leagues at a glance. Six tabs along the bottom; the 💬 button asks the chat anything about your team. Tap any player for his card, news and live stats during his game.', art: <TabArt /> },
     { emoji: '🔒💎', title: 'Tag players for trades', body: 'On a player card, tap 🔒 Will not trade or 💎 High value. Trade ideas never offer 🔒 players and only move 💎 players for a premium. Ask chat "good trades without locked players".', art: <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'center' }}><Chip t="🔒 Will not trade" c={C.border} /><Chip t="💎 High value" c={C.gold} /></View> },
     { emoji: '🎯', title: 'Picks & leaderboard', body: 'Pick NFL winners each week before kickoff, see your record and chart, paste old picks from Notes, and join the shared leaderboard with friends.', art: <TabArt on={['Picks']} /> },
     { emoji: '✱', title: 'Catch up past weeks', body: 'New here mid-season? On Picks, tap ✱ Enter past picks, then tap who you picked in finished games (or paste them from Notes). They count in your record and on the leaderboard, marked ✱.', art: <View style={{ flexDirection: 'row', gap: 10, justifyContent: 'center' }}><Chip t="✱ Enter past picks" c={C.gold} /><Chip t="📋 Paste" c={C.magenta} /></View> },

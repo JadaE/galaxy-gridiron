@@ -1,7 +1,7 @@
 import React from 'react';
 import { View, Text, useWindowDimensions, Image } from 'react-native';
 import { Screen, Card, useApp, T, Chip } from '../ui';
-import { Bars, Lines } from '../charts';
+import { Bars } from '../charts';
 import { C } from '../theme';
 import { fmt, weeklySeries, ordinal } from '../model';
 import { avatarUrl } from '../api';
@@ -16,7 +16,6 @@ export default function League() {
   const allPlay = b.teams.map(t => { const ws = weeklySeries(b, t.rid); const w = ws.reduce((s, x) => s + x.allPlayW, 0), l = ws.reduce((s, x) => s + x.allPlayL, 0); return { t, pct: w + l ? w / (w + l) : 0 }; }).sort((x, y) => y.pct - x.pct);
   const myAP = allPlay.findIndex(x => x.t.rid === b.me.rid) + 1;
   const seasons = leagues.filter(l => l.name === b.league.name || l.league_id === b.league.previous_league_id);
-  const ws = weeklySeries(b);
   return (
     <Screen info="league" title="League" subtitle={`${b.teams.length} teams · ${b.league.scoring_settings?.rec === 1 ? 'PPR' : b.league.scoring_settings?.rec === 0.5 ? 'Half PPR' : 'Standard'}${b.league.settings?.type === 1 ? ' · Keeper' : b.league.settings?.type === 2 ? ' · Dynasty' : ''}`}>
       {seasons.length > 1 ? (
@@ -69,11 +68,6 @@ export default function League() {
         ))}
         <Text style={[T.sub, { marginTop: 6 }]}>You're {ordinal(myAP)} in all-play and {ordinal(b.me.rank)} in the standings.</Text>
       </Card>
-      {ws.length ? (
-        <Card title="You vs the league average" emoji="📊">
-          <Lines width={cw} labels={ws.map(x => 'W' + x.w)} series={[{ name: 'You', color: C.mint, values: ws.map(x => x.me), area: true }, { name: 'League avg', color: C.gold, values: ws.map(x => x.avg), dashed: true }]} />
-        </Card>
-      ) : null}
     </Screen>
   );
 }

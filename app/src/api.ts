@@ -160,8 +160,10 @@ export const stats = {
 };
 
 /** FantasyCalc public trade values (redraft). Returns sleeperId -> value. */
-export async function fantasyCalc(numTeams: number, ppr: number, f?: boolean): Promise<Record<string, number>> {
-  const url = `https://api.fantasycalc.com/values/current?isDynasty=false&numQbs=1&numTeams=${numTeams}&ppr=${ppr}`;
+/** v0.0.10: 1-QB values unless the league really has a SUPER_FLEX slot (superflex values make every QB look precious). */
+export const fantasyCalcUrl = (numTeams: number, ppr: number, numQbs: 1 | 2 = 1) => `https://api.fantasycalc.com/values/current?isDynasty=false&numQbs=${numQbs}&numTeams=${numTeams}&ppr=${ppr}`;
+export async function fantasyCalc(numTeams: number, ppr: number, f?: boolean, numQbs: 1 | 2 = 1): Promise<Record<string, number>> {
+  const url = fantasyCalcUrl(numTeams, ppr, numQbs);
   return getJSON(url, 6 * HOUR, { force: f, transform: (arr: any[]) => { const o: Record<string, number> = {}; for (const r of arr || []) if (r.player?.sleeperId) o[r.player.sleeperId] = r.value; return o; } });
 }
 

@@ -13,6 +13,8 @@ AJ=$(node -e "const a=require('./app.json').expo;console.log(a.version+':'+a.and
 VT=$(node -e "const s=require('fs').readFileSync('src/version.ts','utf8');console.log(s.match(/VERSION_NAME = '([^']+)'/)[1]+':'+s.match(/VERSION_CODE = (\\d+)/)[1])")
 [ "$AJ" = "$VT" ] || { echo "Version mismatch: app.json $AJ vs src/version.ts $VT" >&2; exit 1; }
 GG_VERSION=${GG_VERSION:-${AJ%%:*}}
+# bundle ONLY the 4 public config keys (never config.local.json itself)
+bash $ROOT/tools/gen-appconfig.sh
 [ -d android ] || npx expo prebuild -p android --no-install
 echo "sdk.dir=$ANDROID_HOME" > android/local.properties
 G=android/app/build.gradle
@@ -47,6 +49,8 @@ mkdir -p $ROOT/dist
 # verify what actually got built before publishing
 BADGE=$($(ls -d $ANDROID_HOME/build-tools/* | tail -1)/aapt2 dump badging $OUT | awk "NR==1")
 echo "$BADGE" | grep -q "versionCode='${AJ##*:}' versionName='${AJ%%:*}'" || { echo "APK version mismatch: $BADGE" >&2; exit 1; }
+# fail the build if any private config value made it into the APK (Hermes bundle, dex, resources)
+bash $ROOT/tools/leak-check.sh apk $OUT "$CFG" || { echo "APK leak check failed: not copying to dist/" >&2; exit 1; }
 cp $OUT $ROOT/dist/GalaxyGridiron-v${GG_VERSION}.apk
 ls -la $ROOT/dist
 echo BUILD_OK

@@ -1,4 +1,4 @@
-import { Bundle, Team, ppos, isOut, pname } from './model';
+import { Bundle, Team, ppos, isOut, pname, FLEX_ELIG, flexable } from './model';
 
 export type Tag = 'never' | 'high';
 export type Tags = Record<string, Tag>;
@@ -64,6 +64,26 @@ export function recentlyAdded(b: Bundle): Record<string, number> {
   return out;
 }
 
+/** Trade-value lineup: starters at full value, bench at DEPTH_W (QB depth in a 1-QB league is bye cover only). */
+export function lineupFC(b: Bundle, ids: string[], v: (id: string) => number) {
+  const pool = ids.filter(id => POS.includes(ppos(b, id) as any) && !isOut(b.players[id]?.i)).sort((x, y) => v(y) - v(x));
+  const used = new Set<string>();
+  let total = 0;
+  const strict = b.slots.filter(s => POS.includes(s as any));
+  const flex = b.slots.filter(s => !POS.includes(s as any) && (FLEX_ELIG[s] || []).some(p => POS.includes(p as any)));
+  for (const s of [...strict, ...flex]) {
+    const el = FLEX_ELIG[s] || [s];
+    const pick = pool.find(id => !used.has(id) && el.includes(ppos(b, id)));
+    if (pick) { used.add(pick); total += v(pick); }
+  }
+  for (const p of POS) {
+    const w = p === 'QB' && !flexable(b.slots, 'QB') ? [0.1] : DEPTH_W[p];
+    const rest = pool.filter(id => !used.has(id) && ppos(b, id) === p);
+    total += w.reduce((a, wt, i) => a + wt * (rest[i] ? v(rest[i]) : 0), 0);
+  }
+  return total;
+}
+
 export type TradeOpts = { noHigh?: boolean; noStarters?: boolean };
 /** 🔒 Will-not-trade players are never offered. opts.noHigh also keeps 💎 personal-high-value players out,
  * opts.noStarters keeps her current starters out. */
@@ -74,12 +94,11 @@ export function tradeIdeas(b: Bundle, tags: Tags, limit = 10, opts: TradeOpts = 
   const ns = nStarters(b);
   const profiles = teamProfiles(b);
   const mine = profiles.find(p => p.t.rid === b.me.rid)!;
-  // starters at full value + bench depth at a discount (bye/injury cover), so giving a bench player is not free
-  const lineup = (ids: string[]) => POS.reduce((s, p) => {
-    const vals = ids.filter(id => ppos(b, id) === p && !isOut(b.players[id]?.i)).map(v).sort((x, y) => y - x);
-    const n = Math.round(ns[p]);
-    return s + vals.slice(0, n).reduce((a, c) => a + c, 0) + DEPTH_W[p].reduce((a, w, i) => a + w * (vals[n + i] || 0), 0);
-  }, 0);
+  // v0.0.10: fill her REAL lineup slots (strict QB/RB/WR/TE first, then each FLEX with the best eligible player left),
+  // then add bench depth at a discount. Before, FLEX was a fractional count that rounded away, so a WR starting at
+  // FLEX looked like a cheap bench piece and got traded for a QB who would sit. A QB only counts past the 1st
+  // when the league has a SUPER_FLEX; otherwise a backup QB is bye cover only.
+  const lineup = (ids: string[]) => lineupFC(b, ids, v);
   const recent = recentlyAdded(b);
   const base = lineup(b.me.players);
   const giveable = b.me.players.filter(id => b.players[id] && POS.includes(ppos(b, id) as any) && v(id) > 0 && tags[id] !== 'never' && !(opts.noHigh && tags[id] === 'high') && !(opts.noStarters && b.me.starters.includes(id)));
