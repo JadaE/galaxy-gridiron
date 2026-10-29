@@ -1,5 +1,7 @@
 # Galaxy Gridiron
 
+> 🤖 This project was created by [Grok Bot](https://cursor.com) from Cursor.
+
 Read-only fantasy football companion for Sleeper leagues. Expo / React Native (TypeScript) Android app plus an iPhone PWA export, with an optional Cloudflare Worker (`worker/`) for the AI chat.
 
 - `app/`: the app. Inside `app/`: `npm install && npm test && npx tsc --noEmit`.
