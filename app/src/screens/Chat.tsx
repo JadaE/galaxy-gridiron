@@ -28,7 +28,7 @@ function PCard({ c, onPress, win }: { c: PlayerCardData; onPress: () => void; wi
       {[
         ...(c.week || []),
         ['Proj', fmt(c.proj)], ['Median', fmt(c.median)], ['Floor', fmt(c.floor)], ['Value', fmt(c.value)],
-        ['Trend', (c.trend > 0 ? '▲ ' : c.trend < 0 ? '▼ ' : '') + fmt(Math.abs(c.trend))], ...(c.fc ? [['Trade', String(c.fc)]] : []), ...(c.bye ? [['Bye', 'Wk ' + c.bye]] : []),
+        ['Trend', (c.trend > 0 ? '▲ ' : c.trend < 0 ? '▼ ' : '') + fmt(Math.abs(c.trend))], ...(c.fc ? [['Trade', String(c.fc)]] : []), ...(c.rankTotal ? [['Rank', `${c.rankAvg ? c.rankAvg + ' avg · ' : ''}${c.rankTotal} total`]] : []), ...(c.bye ? [['Bye', 'Wk ' + c.bye]] : []),
       ].map(([k, v]) => (
         <View key={k} style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 3 }}>
           <Text style={{ color: C.dim, fontSize: 11 }}>{k}</Text><Text style={{ color: C.text, fontSize: 11.5, fontWeight: '700' }}>{v}</Text>

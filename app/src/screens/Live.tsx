@@ -114,7 +114,7 @@ export default function LiveCard({ week }: { week: number }) {
         </View>
         <View style={{ alignItems: 'center', paddingBottom: 4 }}>
           <Text style={{ color: wp >= 0.5 ? C.mint : C.magenta, fontSize: 22, fontWeight: '900' }}>{Math.round(wp * 100)}%</Text>
-          <Text style={{ color: C.dim, fontSize: 10 }}>{allFinal && started ? (wp >= 0.5 ? 'you won' : 'you lost') : 'your win chance (est.)'}</Text>
+          <Text style={{ color: C.dim, fontSize: 10 }}>{allFinal && started ? (wp >= 0.5 ? 'you won' : 'you lost') : 'win chance'}</Text>
         </View>
         <View style={{ flex: 1, alignItems: 'flex-end' }}>
           <Text style={{ color: C.magenta, fontSize: 11, fontWeight: '800' }} numberOfLines={1}>{oppTeam ? '@' + oppTeam.display.toUpperCase() : 'BYE'}</Text>
@@ -126,7 +126,7 @@ export default function LiveCard({ week }: { week: number }) {
         <LinearGradient colors={[C.mint, '#4FE3D2']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ width: `${Math.max(3, Math.min(97, wp * 100))}%` as any }} />
         <LinearGradient colors={[C.purple, C.magenta]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ flex: 1 }} />
       </View>
-      <Text style={[T.sub, { marginTop: 6, fontSize: 11 }]}>{status}. Win chance is a rough estimate from points so far + projections for the time left.</Text>
+      <Text style={[T.sub, { marginTop: 6, fontSize: 11 }]}>{status}</Text>
 
       {/* player by player */}
       <View style={{ marginTop: 10 }}>
@@ -178,9 +178,9 @@ export default function LiveCard({ week }: { week: number }) {
             <Text style={{ color: C.dim, fontSize: 10.5 }}>{who.map(w => (w.mine ? '' : '@') + pname(b, w.id).split(' ').slice(-1)[0]).join(', ')} · {p.away} {p.as}-{p.hs} {p.home} · Q{p.period} {p.clock}</Text>
           </View>
         </View>
-      )) : <Text style={[T.sub, { marginTop: 4 }]}>{started ? 'No scoring plays for players in this matchup yet.' : 'Touchdowns and field goals by players in this matchup show up here.'}</Text>}
+      )) : <Text style={[T.sub, { marginTop: 4 }]}>{started ? 'None yet.' : 'TDs and field goals show up here.'}</Text>}
       {feed.length > 6 ? <Text onPress={() => setShowAll(!showAll)} style={{ color: C.mint, fontSize: 12, fontWeight: '700', marginTop: 8 }}>{showAll ? 'Show less' : `Show all ${feed.length}`} ›</Text> : null}
-      <Text style={{ color: C.dim, fontSize: 10, marginTop: 8 }}>Points: Sleeper (your league's scoring). Clock and plays: ESPN. Refreshes about every 25 seconds while games are on, and stops when none are.</Text>
+      <Text style={{ color: C.dim, fontSize: 10, marginTop: 8 }}>Points: Sleeper · Clock: ESPN · Win chance is an estimate · Updates every 25s</Text>
     </Card>
   );
 }

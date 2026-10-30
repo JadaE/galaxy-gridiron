@@ -39,22 +39,23 @@ export function GradeTeaser({ week }: { week: number }) {
 export default function ReportCard({ week }: { week: number }) {
   const { b, openPlayer } = useApp();
   const { loading, r } = useReport(week);
+  const [open, setOpen] = useState(false);
   if (loading) return <Card title={`Week ${week} report card`} emoji="📝"><Text style={T.sub}>Grading…</Text></Card>;
   if (!r) return null;
   const col = gColor(r);
   return (
     <Card title={`Week ${week} report card`} emoji="📝" accent={col}>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 14 }}>
-        <View style={{ width: 74, height: 74, borderRadius: 18, borderWidth: 3, borderColor: col, alignItems: 'center', justifyContent: 'center', backgroundColor: col + '18' }}>
-          <Text style={{ color: col, fontSize: 34, fontWeight: '900' }}>{r.grade}</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+        <View style={{ width: 64, height: 64, borderRadius: 16, borderWidth: 3, borderColor: col, alignItems: 'center', justifyContent: 'center', backgroundColor: col + '18' }}>
+          <Text style={{ color: col, fontSize: 30, fontWeight: '900' }}>{r.grade}</Text>
         </View>
-        <View style={{ flex: 1, gap: 2 }}>
-          <Text style={{ color: C.text, fontSize: 15, fontWeight: '800' }}>{fmt(r.total)} pts {r.won == null ? '' : r.won ? '· W 🎉' : '· L'}</Text>
-          <Text style={T.sub}>Projected {r.projTotal != null ? fmt(r.projTotal) : '-'} · League median {fmt(r.median)} · High {fmt(r.high)}</Text>
-          <Text style={T.sub}>Best possible lineup {fmt(r.optimal)} · <Text style={{ color: r.benchLeft > 10 ? C.red : C.sub }}>{fmt(r.benchLeft)} left on bench</Text></Text>
+        {/* v0.0.11: numbers first (like Sleeper); the explanation lives under "Details" */}
+        <View style={{ flex: 1, flexDirection: 'row', flexWrap: 'wrap', rowGap: 6 }}>
+          {([['Points', fmt(r.total) + (r.won == null ? '' : r.won ? ' W' : ' L'), C.text], ['Projected', r.projTotal != null ? fmt(r.projTotal) : '-', C.sub], ['League median', fmt(r.median), C.sub], ['Left on bench', fmt(r.benchLeft), r.benchLeft > 10 ? C.red : C.sub]] as [string, string, string][]).map(([l, v, c]) => (
+            <View key={l} style={{ width: '50%' }}><Text style={{ color: c, fontSize: 15, fontWeight: '800' }}>{v}</Text><Text style={{ color: C.dim, fontSize: 10.5 }}>{l}</Text></View>
+          ))}
         </View>
       </View>
-      {r.notes.map((n, i) => <Text key={i} style={[T.sub, { marginTop: 6 }]}>• {n}</Text>)}
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 10 }}>
         {r.best ? <Pressable onPress={() => openPlayer(r.best!.id)} style={{ flex: 1, backgroundColor: C.green + '18', borderRadius: 10, padding: 8, flexDirection: 'row', gap: 6, alignItems: 'center' }}><Head id={r.best.id} size={28} /><View style={{ flex: 1 }}><Text style={{ color: C.green, fontSize: 10, fontWeight: '800' }}>BEST</Text><Text style={{ color: C.text, fontSize: 12 }} numberOfLines={1}>{pname(b, r.best.id)}</Text><Text style={{ color: C.green, fontSize: 11, fontWeight: '700' }}>+{fmt(r.best.diff!)} vs proj</Text></View></Pressable> : null}
         {r.worst ? <Pressable onPress={() => openPlayer(r.worst!.id)} style={{ flex: 1, backgroundColor: C.red + '18', borderRadius: 10, padding: 8, flexDirection: 'row', gap: 6, alignItems: 'center' }}><Head id={r.worst.id} size={28} /><View style={{ flex: 1 }}><Text style={{ color: C.red, fontSize: 10, fontWeight: '800' }}>WORST</Text><Text style={{ color: C.text, fontSize: 12 }} numberOfLines={1}>{pname(b, r.worst.id)}</Text><Text style={{ color: C.red, fontSize: 11, fontWeight: '700' }}>{fmt(r.worst.diff!)} vs proj</Text></View></Pressable> : null}
@@ -79,7 +80,12 @@ export default function ReportCard({ week }: { week: number }) {
           <Text style={{ width: 46, textAlign: 'right', color: r.projTotal == null ? C.dim : r.total >= r.projTotal ? C.green : C.red, fontSize: 12, fontWeight: '800' }}>{r.projTotal == null ? '-' : (r.total >= r.projTotal ? '+' : '') + fmt(r.total - r.projTotal)}</Text>
         </View>
       </View>
-      <Text style={[T.sub, { marginTop: 8, color: C.dim }]}>Grade weighs your score vs the league median (50%), how close you came to your best possible lineup (30%), and actual vs projected (20%).</Text>
+      <Text onPress={() => setOpen(!open)} style={{ color: C.mint, fontSize: 12, fontWeight: '700', marginTop: 8 }}>{open ? 'Hide details' : 'Details'} ›</Text>
+      {open ? <>
+        <Text style={[T.sub, { marginTop: 4 }]}>Best possible lineup {fmt(r.optimal)} · League high {fmt(r.high)}</Text>
+        {r.notes.map((n, i) => <Text key={i} style={[T.sub, { marginTop: 4 }]}>• {n}</Text>)}
+        <Text style={[T.sub, { marginTop: 6, color: C.dim }]}>Grade weighs your score vs the league median (50%), how close you came to your best possible lineup (30%), and actual vs projected (20%).</Text>
+      </> : null}
     </Card>
   );
 }

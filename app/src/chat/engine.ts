@@ -1,16 +1,18 @@
 // Chat engines. The UI only talks to ChatEngine.answer(question, context), so a future AI backend can be swapped in.
+import { posRank, rankLabel } from '../model';
 import { pronObj, lineupGap, deadThisWeek, FLEX_ELIG, elig, benchWorth } from '../model';
 import { Bundle, pname, ppos, projOf, val, ros, fmt, isOut, optimalLineup, slotLabel, lineupAlerts, waiverReport, txReason, summary, ordinal, matchupFor, byeWeek, famLabel, isRelevant, pron } from '../model';
 import { pickups, bestDrop } from '../pickups';
-import { tradeIdeas, Tags } from '../trades';
-import { NameIndex } from './names';
+import { tradeIdeas, Tags, offersFor } from '../trades';
+import { tradeWords, namedOnRoster, isEitherOr, splitAsk, NOT_A_NAME } from './tradeaway';
+import { NameIndex, findMentions, normalize, COMMON } from './names';
 import { rosterFit, FitResult } from '../fit';
 import { compareThisWeek } from './week';
 import { practiceFor } from '../gameinfo';
 import { parse, Action, TradeAsk } from './intents';
 
 export type ChatContext = { b: Bundle; tags: Tags };
-export type PlayerCardData = { id: string; name: string; pos: string; team?: string; inj?: string; proj: number; value: number; median: number; floor: number; tier: string; trend: number; status: string; statusKind: 'mine' | 'other' | 'fa'; bye?: number; fc?: number; games: number; week?: [string, string][]; flag?: string };
+export type PlayerCardData = { rankAvg?: string; rankTotal?: string; id: string; name: string; pos: string; team?: string; inj?: string; proj: number; value: number; median: number; floor: number; tier: string; trend: number; status: string; statusKind: 'mine' | 'other' | 'fa'; bye?: number; fc?: number; games: number; week?: [string, string][]; flag?: string };
 export type Fit = { aId: string; bId: string; aPct: number; bPct: number; reasons: string[] };
 export type Reply = { text: string; players?: string[]; tab?: string; cards?: PlayerCardData[]; verdict?: string; choices?: { label: string; q: string }[]; fit?: Fit; winner?: string; engine?: 'rules' | 'budget' | 'better'; costUsd?: number; notice?: string };
 export interface ChatEngine { readonly name: string; readonly enabled: boolean; answer(question: string, ctx: ChatContext): Promise<Reply> }
@@ -37,6 +39,7 @@ export function card(b: Bundle, id: string): PlayerCardData {
   return {
     id, name: pname(b, id), pos: ppos(b, id), team: b.players[id]?.t, inj: b.players[id]?.i, proj: projOf(b, id), value: val(b, id), median: v.median, floor: v.floor, tier: v.tier, trend: v.trend,
     status: statusKind === 'mine' ? 'On your team' : statusKind === 'other' ? `@${owner!.display}${famLabel(owner!.display)}` : 'Free agent', statusKind, bye: byeWeek(b, id), fc: b.fc?.[id], games: v.games, flag: v.flag,
+    rankAvg: rankLabel(posRank(b, id), 'perGame'), rankTotal: rankLabel(posRank(b, id), 'total'),
   };
 }
 /** In season with projections loaded, a start/sit is THIS week: Sleeper's projection (league scoring), 0 if out with no projection.
@@ -208,18 +211,59 @@ function startOne(b: Bundle, id: string): Reply {
   return { text: '', cards: [C], verdict: `🪑 Bench ${pronObj(b, id)} this week. ${blockers.length ? blockers.join(', ') + ' project higher.' : 'Others project higher.'}${isOut(C.inj) ? ` ${pron(b, id, true)}'s ${C.inj}.` : ''}` };
 }
 
+const tv = (n: number) => Math.round(n).toLocaleString('en-US');
+export const TRADE_VALUE_NOTE = 'Trade value = market price from FantasyCalc (higher is worth more). "Your lineup" = how much stronger your starters get on that same scale (a backup QB only counts as bye-week cover).';
+/** v0.0.11: "I want to trade Pat and Wilson, who should I ask for?" Offers where she gives exactly the players she named. */
+export function tradeAwayReply(b: Bundle, tags: Tags, question: string, idx?: NameIndex): Reply | null {
+  if (b.isPast || !tradeWords(question)) return null;
+  const roster = b.me.players.filter(id => b.players[id]).map(id => ({ id, name: pname(b, id), pos: ppos(b, id) }));
+  const { give, ambiguous } = namedOnRoster(question, roster);
+  if (!give.length && !ambiguous) return null;
+  if (give.length + (ambiguous ? 1 : 0) >= 2 && isEitherOr(question)) return null; // "trade Pat or Wilson?" = compare
+  if (ambiguous) {
+    const w = ambiguous.word, W = w[0].toUpperCase() + w.slice(1);
+    return { text: `You have ${ambiguous.ids.length} players named ${W}. Which one do you mean?`, choices: ambiguous.ids.map(id => ({ label: pname(b, id), q: question.replace(new RegExp(`\\b${w}\\b`, 'i'), pname(b, id)) })) };
+  }
+  if (!b.fc) return { text: "Trade values haven't loaded yet. Pull down to refresh, then ask again.", players: give };
+  // players she wants back, named after "for" ("Pat and Wilson for Puka?"); names before it that aren't on her team get a note
+  const giveWords = new Set(give.flatMap(id => normalize(pname(b, id)).split(' ')));
+  const owner = (id: string) => b.teams.find(t => t.players.includes(id));
+  const { head, tail } = splitAsk(question);
+  const want = idx && tail ? findMentions(tail, idx).filter(m => m.clear && m.best && !b.me.players.includes(m.best) && owner(m.best) && !m.phrase.split(' ').some(x => giveWords.has(x)) && ['full', 'full-joined', 'alias', 'last', 'first+partial'].includes(m.cands[0].why)).map(m => m.best!) : [];
+  const notMine: string[] = [];
+  if (idx) for (const w of [...new Set(head.split(' '))]) {
+    if (w.length < 3 || COMMON.has(w) || NOT_A_NAME.has(w) || giveWords.has(w)) continue;
+    const c = idx.resolve(w).filter(x => ['first', 'last', 'full'].includes(x.why) && !!b.players[x.id] && !b.me.players.includes(x.id));
+    if (!c.length) continue;
+    const W = w[0].toUpperCase() + w.slice(1), top = c[0], o = owner(top.id);
+    notMine.push(c.length === 1 || top.score - c[1].score >= 4 ? `${pname(b, top.id)} isn't on your team (${o ? `@${o.display} has him` : "he's a free agent"})` : `I don't see a ${W} on your team`);
+  }
+  const { offers, giveV } = offersFor(b, give, 3, want);
+  const names = (ids: string[]) => ids.map(id => pname(b, id)).join(' + ');
+  const withPos = (ids: string[]) => ids.map(id => `${pname(b, id)} (${ppos(b, id)})`).join(' + ');
+  const lines: string[] = [`Trading ${names(give)}: trade value ${give.length > 1 ? give.map(g => tv(b.fc![g] || 0)).join(' + ') + ' = ' : ''}${tv(giveV)}.`];
+  if (notMine.length) lines.unshift(`${notMine.join('. ')}, so this is just for ${names(give)}.`);
+  const locked = give.filter(g => tags[g] === 'never');
+  if (locked.length) lines.push(`(You tagged ${names(locked)} 🔒 Will not trade, but here's what you could get.)`);
+  if (!offers.length) return { text: lines.concat([`I couldn't find a fair trade for ${give.length > 1 ? 'them' : pronObj(b, give[0])}${want.length ? ` that gets you ${names(want)}` : ''} right now.`]).join('\n'), players: give, tab: 'Trades' };
+  if (offers[0].net <= 0) lines.push('No fair deal makes your lineup stronger. The closest one:');
+  offers.forEach((o, i) => lines.push(`\n${i + 1}. You give: ${names(o.give)}\n    You get: ${withPos(o.get)} (from @${o.team.display})\n    Trade value: ${tv(o.giveV)} for ${tv(o.getV)} · Your lineup: ${o.net >= 0 ? '+' : ''}${tv(o.net)}`));
+  lines.push('\n' + TRADE_VALUE_NOTE);
+  return { text: lines.join('\n'), players: [...give, ...offers.flatMap(o => o.get)], tab: 'Trades' };
+}
+
 /** Trade ideas, honoring "without locked / high value / my starters". 🔒 players are never offered. */
 export function tradeIdeasReply(b: Bundle, tags: Tags, ask?: TradeAsk): Reply {
   const opts = { noHigh: !!ask?.noHigh, noStarters: !!ask?.noStarters };
   const { ideas } = tradeIdeas(b, tags, 3, opts);
   const locked = b.me.players.filter(id => tags[id] === 'never'), high = b.me.players.filter(id => tags[id] === 'high');
   const left: string[] = [];
-  if (locked.length) left.push(`🔒 ${locked.map(id => pname(b, id)).join(', ')}`);
-  if (opts.noHigh && high.length) left.push(`💎 ${high.map(id => pname(b, id)).join(', ')}`);
+  if (locked.length) left.push(`your ${locked.length} 🔒 player${locked.length === 1 ? '' : 's'}`);
+  if (opts.noHigh && high.length) left.push(`your ${high.length} 💎 player${high.length === 1 ? '' : 's'}`);
   if (opts.noStarters) left.push('your starters');
-  const head = left.length ? `Leaving out ${left.join(' and ')}.\n` : (ask?.noLocked || ask?.noHigh) && !locked.length && !high.length ? "You haven't tagged anyone 🔒 or 💎 yet (tap a player, then a tag), so nothing extra is left out.\n" : '';
+  const head = left.length ? `Not offering ${left.join(' or ')}.\n` : (ask?.noLocked || ask?.noHigh) && !locked.length && !high.length ? "You haven't tagged anyone 🔒 or 💎 yet (tap a player, then a tag), so nothing extra is left out.\n" : '';
   if (!ideas.length) return { text: head + "I couldn't find a fair trade that helps right now" + (left.length ? ' with those players left out.' : '.'), tab: 'Trades' };
-  return { text: head + ideas.map((x, i) => `${i + 1}. Ask @${x.team.display}${famLabel(x.team.display)}: ${x.give.map(g => pname(b, g)).join(' + ')} for ${x.get.map(g => pname(b, g)).join(' + ')} (+${Math.round(x.net)} lineup value)${x.highTagged ? ' 💎' : ''}`).join('\n'), players: ideas.flatMap(x => [...x.give, ...x.get]), tab: 'Trades' };
+  return { text: (head + ideas.map((x, i) => `\n${i + 1}. You give: ${x.give.map(g => pname(b, g)).join(' + ')}${x.highTagged ? ' 💎' : ''}\n    You get: ${x.get.map(g => `${pname(b, g)} (${ppos(b, g)})`).join(' + ')} (from @${x.team.display}${famLabel(x.team.display)})\n    Trade value: ${tv(x.giveV)} for ${tv(x.getV)} · Your lineup: +${tv(x.net)}`).join('\n') + '\n\n' + TRADE_VALUE_NOTE).replace(/^\n/, ''), players: ideas.flatMap(x => [...x.give, ...x.get]), tab: 'Trades' };
 }
 
 export class RulesEngine implements ChatEngine {
@@ -228,6 +272,9 @@ export class RulesEngine implements ChatEngine {
   async answer(question: string, { b, tags }: ChatContext): Promise<Reply> {
     if (b.isPast && !/how am i|record|standing/.test(question.toLowerCase())) return { text: 'That league is finished. Switch to a 2026 league for advice. I can still tell you how you did.' };
     const idx = indexFor(b);
+    // v0.0.11: trading HER named players beats a single-player card or generic ideas
+    const away = tradeAwayReply(b, tags, question, idx);
+    if (away) return away;
     const p = parse(question, idx);
     if (p.ambiguous && (p.intent !== 'help')) {
       const m = p.ambiguous;

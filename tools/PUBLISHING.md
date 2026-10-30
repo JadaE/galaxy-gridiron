@@ -11,7 +11,7 @@ New release:
 1. Bump `app/app.json` (version + versionCode) and `app/src/version.ts`, then run `bash build-apk.sh` (it checks that the two agree).
 2. Make a new secret path and add it to the config: `jq --arg p "$(python3 -c 'import secrets;print(secrets.token_hex(16))')" '.publishPaths.v010=$p' app/config.local.json > /tmp/c.json && mv /tmp/c.json app/config.local.json && chmod 600 app/config.local.json`, then stage it with `tools/make_site_v2.sh <version> v010 <shots-dir>`.
 3. Edit `publish-site/<updateChannelPath>/version.json` with the new `{versionCode, versionName, apkUrl, notes}`. apkUrl must be on `https://<siteSlug>.here.now/`.
-4. Publish with the here.now skill script: `publish.sh publish-site --slug "$(jq -r .siteSlug app/config.local.json)"`.
+4. Publish with `bash tools/publish.sh <version> <apk-path>`. It runs the release gate (`/workspace/releases/tools/release-gate.sh galaxy-gridiron <version> <apk>`) first and exits non-zero without uploading if it fails; only then does it upload `publishSiteDir` to `siteSlug` (both read from `app/config.local.json`) with the here.now skill script. Only Review & Release publishes and writes sign-offs; never bypass the gate.
 
 Picks leaderboard (v0.0.4+): `publish-site/.herenow/data.json` declares the shared picks collection (name = `picksCollection` in the config, read by `app/src/config.ts`). Keep the file. here.now keeps the records across publishes, and a publish that leaves the manifest out keeps the current schema, but never publish an empty `{"collections":{}}`, because that turns the store off. Public inserts need `Origin: https://<siteSlug>.here.now`.
 

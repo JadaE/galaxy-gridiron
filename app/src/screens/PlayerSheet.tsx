@@ -9,7 +9,7 @@ import { C } from '../theme';
 import { InfoButton } from './Info';
 import { loadLiveGames, LiveGame } from '../live';
 import { breakdown, loadPlayerWeek, showLive, LiveLine } from '../liveline';
-import { pname, ppos, projOf, ppg, seasonPts, fmt, val, valueSource, byeWeek, famLabel } from '../model';
+import { pname, ppos, projOf, ppg, seasonPts, fmt, val, valueSource, byeWeek, famLabel, posRank, rankLabel, rankSentence } from '../model';
 
 export default function PlayerSheet({ id, onClose }: { id: string | null; onClose: () => void }) {
   const { b } = useApp();
@@ -60,6 +60,7 @@ export default function PlayerSheet({ id, onClose }: { id: string | null; onClos
   const qbChanged = !!v?.qbSplit;
   const ini = (pid?: string) => (pid ? (b.players[pid]?.n || '').split(' ').map(x => x[0]).join('').slice(0, 3) : '');
   const bye = byeWeek(b, id);
+  const rk = posRank(b, id); // v0.0.11: rank by points per game AND season total
   const cw = width - 56;
   return (
     <Modal visible animationType="slide" transparent statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
@@ -80,10 +81,11 @@ export default function PlayerSheet({ id, onClose }: { id: string | null; onClos
             </View>
             <View style={{ flexDirection: 'row', backgroundColor: C.card, borderRadius: 14, paddingVertical: 12, borderWidth: 1, borderColor: C.border }}>
               {!b.isPast ? <Stat label={`Wk ${b.week} proj`} value={fmt(projOf(b, id))} color={C.mint} /> : null}
-              <Stat label="Avg / game" value={fmt(ppg(b, id))} />
-              <Stat label="Season pts" value={fmt(seasonPts(b, id), 0)} />
+              <Stat label={rk?.perGame ? `Avg / game · #${rk.perGame}` : 'Avg / game'} value={fmt(ppg(b, id))} />
+              <Stat label={rk?.total ? `Season pts · #${rk.total}` : 'Season pts'} value={fmt(seasonPts(b, id), 0)} />
               {b.fc?.[id] ? <Stat label="Trade value" value={String(b.fc[id])} color={C.gold} /> : null}
             </View>
+            {rk?.total ? <Text style={[T.sub, { marginTop: -6 }]}>🏅 {rankSentence(rk)}</Text> : null}
             {live ? (
               <View style={{ backgroundColor: C.card, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: live.g.state === 'in' ? C.red : C.border, gap: 6 }}>
                 <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>

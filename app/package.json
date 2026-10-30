@@ -24,11 +24,14 @@
     "typescript": "~6.0.3"
   },
   "scripts": {
+    "postinstall": "bash ../tools/gen-appconfig.sh",
+    "pretest": "bash ../tools/gen-appconfig.sh",
+    "typecheck": "bash ../tools/gen-appconfig.sh && tsc --noEmit",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "test": "tsx --require ./tests/rn-shim.cjs tests/chat.test.ts && tsx --require ./tests/rn-shim.cjs tests/ai.test.ts && tsx --require ./tests/rn-shim.cjs tests/model.test.ts && tsx --require ./tests/rn-shim.cjs tests/picks.test.ts && tsx --require ./tests/rn-shim.cjs tests/sync.test.ts && tsx --require ./tests/rn-shim.cjs tests/junk.test.ts && tsx --require ./tests/rn-shim.cjs tests/news.test.ts && tsx --require ./tests/rn-shim.cjs tests/v006.test.ts && tsx --require ./tests/rn-shim.cjs tests/v007.test.ts && tsx --require ./tests/rn-shim.cjs tests/v008.test.ts && tsx --require ./tests/rn-shim.cjs tests/v010.test.ts"
+    "test": "tsx --require ./tests/rn-shim.cjs tests/chat.test.ts && tsx --require ./tests/rn-shim.cjs tests/ai.test.ts && tsx --require ./tests/rn-shim.cjs tests/model.test.ts && tsx --require ./tests/rn-shim.cjs tests/picks.test.ts && tsx --require ./tests/rn-shim.cjs tests/sync.test.ts && tsx --require ./tests/rn-shim.cjs tests/junk.test.ts && tsx --require ./tests/rn-shim.cjs tests/news.test.ts && tsx --require ./tests/rn-shim.cjs tests/v006.test.ts && tsx --require ./tests/rn-shim.cjs tests/v007.test.ts && tsx --require ./tests/rn-shim.cjs tests/v008.test.ts && tsx --require ./tests/rn-shim.cjs tests/v010.test.ts && tsx --require ./tests/rn-shim.cjs tests/v011.test.ts"
   },
   "private": true
 }

@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
 # Stage one version's download page under its own secret path, leaving other versions' folders in place.
-# Usage: make_site_v.sh <version> <publishPaths key in app/config.local.json, e.g. v009 (or a file holding the path)> <shots-dir>
+# Usage: make_site_v2.sh <version> <publishPaths key in app/config.local.json, e.g. v009 (or a file holding the path)> [shots-dir]
+#   shots-dir is optional: with no folder (or a folder with no .png files) the page has no Screens section.
+#   IPHONE=1 adds an "On iPhone?" card linking the iPhone web app (https://<siteSlug>.here.now/<pwaSecretPath>/);
+#   IPHONE_URL=<url> uses that link instead. SHOTS_NOTE overrides the caption under "Screens".
 set -euo pipefail
 BLURB=${BLURB:-}; PREV=${PREV:-the previous version}
 FF=$(cd "$(dirname "$0")/.." && pwd); CFG=$FF/app/config.local.json
 [ -f "$CFG" ] || { echo "missing app/config.local.json (copy app/config.example.json and fill it in)" >&2; exit 1; }
 cfg() { jq -r "$1" "$CFG"; }
 PUB=$(cfg '.publishSiteDir // empty'); PUB=${PUB:-$FF/publish-site}  # staging dir uploaded to here.now (keep it persistent: it holds every version folder)
-V=$1; SECRET=$([ -f "$2" ] && tr -d "\r\n" < "$2" || cfg ".publishPaths.\"$2\""); SHOTS=$3
+V=$1; SECRET=$([ -f "$2" ] && tr -d "\r\n" < "$2" || cfg ".publishPaths.\"$2\""); SHOTS=${3:-}
+[ -n "$SECRET" ] && [ "$SECRET" != null ] || { echo "no publish path for $2 in app/config.local.json" >&2; exit 1; }
+SHOTS_NOTE=${SHOTS_NOTE:-phone-size renders of the same app code}
+IPH=${IPHONE_URL:-}; if [ -z "$IPH" ] && [ "${IPHONE:-0}" = 1 ]; then IPH="https://$(cfg .siteSlug).here.now/$(cfg .pwaSecretPath)/"; fi
 APK=$FF/dist/GalaxyGridiron-v$V.apk
 SITE=$PUB; D=$SITE/$SECRET; rm -rf $D; mkdir -p $D/shots
 [ -f $SITE/index.html ] || echo '<!doctype html><meta charset=utf-8><title>🌌</title><body style="background:#0B1022;color:#636C93;font-family:sans-serif;display:grid;place-items:center;height:90vh">✨</body>' > $SITE/index.html
-cp $APK $D/; cp $SHOTS/*.png $D/shots/
+cp "$APK" "$D/"
+NSHOTS=0
+if [ -n "$SHOTS" ] && [ -d "$SHOTS" ]; then for f in "$SHOTS"/*.png; do [ -f "$f" ] || continue; cp "$f" "$D/shots/"; NSHOTS=$((NSHOTS+1)); done; fi
+[ "$NSHOTS" -gt 0 ] || rmdir "$D/shots"
 SHA=$(sha256sum $APK | cut -c1-16); SIZE=$(du -m $APK | cut -f1)
 {
 cat <<H
@@ -30,11 +39,21 @@ main{max-width:760px;margin:auto;padding:28px 18px}h1{font-size:30px;margin:6px 
 <li>If <b>Play Protect</b> warns about an "unknown app," tap <b>More details → Install anyway</b>. If Chrome asks for permission, tap <b>Settings → Allow from this source</b>, then go back.</li>
 <li>Open Galaxy Gridiron and pull down to refresh.</li>${EXTRA_LI:-}</ol>
 <p class=small>Don't have the app yet? Same steps, but tap Install. If Android says "App not installed," uninstall the old copy first.</p></div>
-<div class=card><b>Screens</b> <span class=small>(phone-size renders of the same app code with your real league data)</span><div class=grid style="margin-top:10px">
 H
-for f in $D/shots/*.png; do n=$(basename $f); echo "<a href=\"shots/$n\"><img loading=lazy src=\"shots/$n\" alt=\"$n\"></a>"; done
+if [ -n "$IPH" ]; then cat <<H
+<div class=card><b>On iPhone?</b><ol>
+<li>Open <a href="$IPH" style="color:#00CEB8">the iPhone web app</a> in <b>Safari</b>.</li>
+<li>Tap <b>Share</b>, then <b>Add to Home Screen</b>. It opens like an app and updates itself.</li></ol></div>
+H
+fi
+if [ "$NSHOTS" -gt 0 ]; then
 cat <<H
-</div></div>
+<div class=card><b>Screens</b> <span class=small>(${SHOTS_NOTE})</span><div class=grid style="margin-top:10px">
+H
+for f in "$D"/shots/*.png; do n=$(basename "$f"); echo "<a href=\"shots/$n\"><img loading=lazy src=\"shots/$n\" alt=\"$n\"></a>"; done
+echo "</div></div>"
+fi
+cat <<H
 <p class=small>Android 7+ · v$V · SHA-256 starts ${SHA} · built $(TZ=America/Chicago date '+%a %b %-d, %-I:%M %p CT')</p>
 </main></body></html>
 H

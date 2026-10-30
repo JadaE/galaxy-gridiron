@@ -59,9 +59,9 @@ const t = async (n: string, f: () => any) => { try { await f(); pass++; console.
     const tags: any = {}; mine.slice(0, 2).forEach(id => (tags[id] = 'never')); mine.slice(2, 5).forEach(id => (tags[id] = 'high'));
     await t('her exact sentence returns trade ideas, not a comparison', async () => {
       const r: any = await rules.answer(HER, { b, tags });
-      assert.ok(!r.fit, 'got a comparison: ' + r.text); assert.ok(/Ask @|couldn.t find/.test(r.text), r.text);
+      assert.ok(!r.fit, 'got a comparison: ' + r.text); assert.ok(/You give:|couldn.t find/.test(r.text), r.text);
       assert.ok(!/Hightower|Duplicate/i.test(r.text), r.text);
-      if (/Ask @/.test(r.text)) assert.ok(/Leaving out 🔒/.test(r.text), r.text);
+      if (/You give:/.test(r.text)) assert.ok(/Not offering your \d+ 🔒/.test(r.text), r.text);
     });
     await t('ideas for her sentence never give a 🔒 or 💎 player', () => {
       tradeIdeas(b, tags, 10, { noHigh: true }).ideas.forEach(i => i.give.forEach(g => assert.ok(!tags[g], pname(b, g))));
