@@ -188,6 +188,42 @@ export const byeWeek = (b: Bundle, id: string) => { const t = b.players[id]?.t; 
 /** v0.0.6: personal nickname labels were removed (the app is shared now). Kept as a no-op so call sites stay simple. */
 export const famLabel = (_display: string) => '';
 export const seasonPts = (b: Bundle, id: string) => b.season_[id]?.[b.si] ?? 0;
+/** v0.0.11: where a player ranks at his position two ways: by season total points and by points per game, so missed
+ * games don't bury a good player (e.g. 6th in average but 19th in total). Per-game ranks only count players with
+ * enough games (at least 40% of the weeks played so far, minimum 2) so a one-game fluke can't top the list. */
+export type PosRank = { pos: string; total: number | null; perGame: number | null; games: number; minGames: number };
+const rankCache = new WeakMap<object, Record<string, PosRank>>();
+export function rankTable(season: Record<string, number[]>, players: Record<string, { p: string }>, si: number, weeksDone: number): Record<string, PosRank> {
+  const minGames = Math.max(2, Math.round(weeksDone * 0.4));
+  const byPos: Record<string, { id: string; tot: number; g: number }[]> = {};
+  for (const id in season) {
+    const r = season[id], pos = players[id]?.p;
+    if (!pos || !r || !(r[3] > 0)) continue;
+    (byPos[pos] ||= []).push({ id, tot: r[si] || 0, g: r[3] });
+  }
+  const out: Record<string, PosRank> = {};
+  for (const pos in byPos) {
+    const list = byPos[pos];
+    [...list].sort((a, c) => c.tot - a.tot).forEach((x, i) => (out[x.id] = { pos, total: i + 1, perGame: null, games: x.g, minGames }));
+    list.filter(x => x.g >= minGames).sort((a, c) => c.tot / c.g - a.tot / a.g).forEach((x, i) => (out[x.id].perGame = i + 1));
+  }
+  return out;
+}
+export function posRank(b: Bundle, id: string): PosRank | null {
+  let t = rankCache.get(b);
+  if (!t) { t = rankTable(b.season_ || {}, b.players, b.si, b.isPast ? 17 : Math.max(1, b.lastScored)); rankCache.set(b, t); }
+  return t[id] || null;
+}
+/** "QB6" style short label, or '' */
+export const rankLabel = (r: PosRank | null, kind: 'perGame' | 'total') => (r && r[kind] ? `${r.pos}${r[kind]}` : '');
+/** Plain one-liner for the player card, e.g. "6th among QBs in points per game, 19th in total points (played 5 games)." */
+export function rankSentence(r: PosRank | null): string {
+  if (!r || !r.total) return '';
+  const pos = r.pos === 'DEF' ? 'defenses' : r.pos === 'K' ? 'kickers' : r.pos + 's';
+  if (!r.perGame) return `${ordinal(r.total)} among ${pos} in total points. Only ${r.games} game${r.games === 1 ? '' : 's'} played, so no per-game rank yet (needs ${r.minGames}).`;
+  const gap = r.total - r.perGame;
+  return `${ordinal(r.perGame)} among ${pos} in points per game, ${ordinal(r.total)} in total points.${gap >= 5 ? ` Higher per game because of missed games (${r.games} played).` : ''}`;
+}
 export const fmt = (n: number, d = 1) => (Number.isFinite(n) ? n.toFixed(d) : '-');
 export const ordinal = (n: number) => n + (['th', 'st', 'nd', 'rd'][((n % 100) - 20) % 10] || ['th', 'st', 'nd', 'rd'][n % 100] || 'th');
 

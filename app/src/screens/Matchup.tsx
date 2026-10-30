@@ -4,7 +4,7 @@ import { Screen, Card, PlayerRow, useApp, T, Chip, Head } from '../ui';
 import { VersusBars, TugBar } from '../charts';
 import { C } from '../theme';
 import { matchupFor, posBreakdown, fmt, projOf, slotLabel, pname, famLabel, byeWeek } from '../model';
-import { LiveGame, loadLiveGames, matchupFinal, resultLine } from '../live';
+import { LiveGame, loadLiveGames, matchupFinal, resultLine, shortResult } from '../live';
 import ReportCard from './ReportCard';
 import LiveCard from './Live';
 
@@ -33,9 +33,8 @@ export default function Matchup() {
   const a = useProj ? m.me.proj : m.me.points, o = useProj ? (m.opp?.proj ?? 0) : (m.opp?.points ?? 0);
   const pa = posBreakdown(b, m.me, useProj), po = posBreakdown(b, m.opp, useProj);
   const rows = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF'].map(p => ({ label: p, a: pa[p] || 0, b: po[p] || 0 }));
-  const edge = rows.filter(r => r.a > r.b).map(r => r.label), weak = rows.filter(r => r.b > r.a).map(r => r.label);
   return (
-    <Screen info="matchup" title={`Week ${week}`} subtitle={useProj ? 'Projected (games not started)' : played ? 'Final / live scores' : ''}>
+    <Screen info="matchup" title={`Week ${week}`} subtitle={useProj ? 'Projected' : played ? (decided ? 'Final' : 'Live') : ''}>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6 }}>
         {weeks.map(w => <Chip key={w} label={`W${w}${w <= b.lastScored ? ' ✓' : ''}`} active={w === week} onPress={() => setWeek(w)} />)}
       </ScrollView>
@@ -55,16 +54,21 @@ export default function Matchup() {
           </View>
         </View>
         <View style={{ marginTop: 12 }}><TugBar a={a} b={o} width={cw} /></View>
-        <Text style={[T.sub, { marginTop: 8, textAlign: 'center' }]}>
-          {resultLine(a, o, useProj, decided, fmt)}
-        </Text>
+        {/* v0.0.11: one short result pill. Still "Leading by" (never "Won by") until every game for both teams is final */}
+        <View style={{ alignSelf: 'center', marginTop: 10, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 4, backgroundColor: (a >= o ? C.mint : C.magenta) + '1F' }}>
+          <Text style={{ color: a >= o ? C.mint : C.magenta, fontWeight: '800', fontSize: 13 }}>{shortResult(resultLine(a, o, useProj, decided, fmt))}</Text>
+        </View>
       </Card>
       {week <= b.lastScored && !b.isPast ? <ReportCard week={week} /> : null}
       <Card title="Position by position" emoji="⚔️" right={<Text style={T.sub}>{useProj ? 'projected' : 'actual'}</Text>}>
         <VersusBars rows={rows} width={cw} />
-        <Text style={[T.sub, { marginTop: 8 }]}>
-          {edge.length ? `You have the edge at ${edge.join(', ')}. ` : ''}{weak.length ? `They're stronger at ${weak.join(', ')}.` : ''}
-        </Text>
+        {/* v0.0.11: numbers, not a sentence: +/- per position (green = you're ahead there) */}
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>
+          {rows.filter(r => r.a || r.b).map(r => { const d = r.a - r.b; const col = d > 0 ? C.mint : d < 0 ? C.magenta : C.sub; return (
+            <View key={r.label} style={{ borderRadius: 8, borderWidth: 1, borderColor: col + '66', backgroundColor: col + '14', paddingHorizontal: 7, paddingVertical: 3 }}>
+              <Text style={{ color: col, fontSize: 11.5, fontWeight: '800' }}>{r.label} {d > 0 ? '+' : ''}{fmt(d)}</Text>
+            </View>); })}
+        </View>
       </Card>
       <Card title="Head to head" emoji="🧑‍🤝‍🧑">
         {m.me.starters.map((id, i) => {

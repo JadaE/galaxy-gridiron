@@ -167,3 +167,46 @@ export function tradeIdeas(b: Bundle, tags: Tags, limit = 10, opts: TradeOpts = 
 
 export const tagLabel = (t?: Tag) => (t === 'never' ? '🔒 Will not trade' : t === 'high' ? '💎 Personal high value' : '');
 export { pname };
+
+export type Offer = { team: Team; give: string[]; get: string[]; giveV: number; getV: number; net: number; fair: boolean };
+/** v0.0.11: she names the players she wants to trade away ("Pat and Wilson"). Every offer gives EXACTLY those players
+ * and gets 1 or 2 players back from one team, at a fair price (their trade value within about 15% of hers).
+ * net = how much her trade-value lineup improves (starters full value, bench discounted, a backup QB in a 1-QB
+ * league is bye cover only), so a QB she can't start never looks like a win. `want` limits what she gets to those players. */
+export function offersFor(b: Bundle, give: string[], limit = 3, want: string[] = []): { offers: Offer[]; giveV: number } {
+  if (!b.fc || !give.length) return { offers: [], giveV: 0 };
+  const fc = b.fc;
+  const v = (id: string) => fc[id] || 0;
+  const giveV = give.reduce((s, g) => s + v(g), 0);
+  if (giveV <= 0) return { offers: [], giveV };
+  const base = lineupFC(b, b.me.players, v);
+  const all: Offer[] = [];
+  for (const t of b.teams) {
+    if (t.rid === b.me.rid) continue;
+    let pool = t.players.filter(id => b.players[id] && POS.includes(ppos(b, id) as any) && v(id) > 0 && !isOut(b.players[id]?.i)).sort((x, y) => v(y) - v(x));
+    if (want.length) { if (!want.some(w => pool.includes(w))) continue; }
+    pool = pool.slice(0, 10);
+    const sets: string[][] = pool.map(id => [id]);
+    for (let i = 0; i < pool.length; i++) for (let j = i + 1; j < pool.length; j++) sets.push([pool[i], pool[j]]);
+    for (const get of sets) {
+      if (want.length && !want.every(w => get.includes(w) || !t.players.includes(w))) continue;
+      const getV = get.reduce((s, g) => s + v(g), 0);
+      const ratio = getV / giveV;
+      if (ratio < 0.85 || ratio > 1.15) continue;
+      const after = b.me.players.filter(id => !give.includes(id)).concat(get);
+      const net = lineupFC(b, after, v) - base;
+      all.push({ team: t, give, get, giveV, getV, net, fair: true });
+    }
+  }
+  all.sort((x, y) => y.net - x.net || x.get.length - y.get.length);
+  const out: Offer[] = [], perTeam: Record<number, number> = {}, gotUsed = new Set<string>();
+  const good = all.filter(o => o.net > 0);
+  for (const o of good.length ? good : all) {
+    if (out.length >= limit) break;
+    if ((perTeam[o.team.rid] || 0) >= 2 || o.get.some(g => gotUsed.has(g))) continue;
+    perTeam[o.team.rid] = (perTeam[o.team.rid] || 0) + 1; o.get.forEach(g => gotUsed.add(g));
+    out.push(o);
+    if (!good.length) break; // nothing helps: show only the closest fair deal
+  }
+  return { offers: out, giveV };
+}

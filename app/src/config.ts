@@ -1,18 +1,17 @@
 // The ONE place app code reads deployment-specific values (site slug, update channel, collections).
-// Only these 4 public keys are ever bundled. build-apk.sh / tools/make_pwa.sh run tools/gen-appconfig.sh, which uses jq
-// to copy just these keys from the gitignored app/config.local.json (or config.example.json placeholders) into the
-// gitignored app/src/appconfig.generated.json. A fresh clone without it falls back to the committed placeholder
-// app/src/appconfig.default.json, so tsc and tests still run (such a build cannot reach the real site).
-// NEVER require config.local.json here: it holds the keystore password, secret paths and Sleeper ids.
+// Only these 4 public keys are ever bundled. tools/gen-appconfig.sh (run by build-apk.sh, tools/make_pwa.sh, and
+// `npm install` / `npm test` in app/) writes the gitignored app/src/appconfig.generated.json from app/config.local.json,
+// falling back to the committed placeholders (config.example.json, or app/src/appconfig.default.json if jq is missing).
+// v0.0.11: ONE explicit import, so the bundler includes exactly one config file (the old try/catch bundled both).
+// NEVER import config.local.json here: it holds the keystore password, secret paths and Sleeper ids.
+import generated from './appconfig.generated.json';
 export type AppConfig = {
   siteSlug: string;
   updateChannelPath: string;
   picksCollection: string;
   feedbackCollection: string;
 };
-declare const require: (id: string) => any;
-let cfg: AppConfig;
-try { cfg = require('./appconfig.generated.json'); } catch { cfg = require('./appconfig.default.json'); }
+const cfg: AppConfig = generated;
 export const CONFIG: AppConfig = {
   siteSlug: cfg.siteSlug,
   updateChannelPath: cfg.updateChannelPath,

@@ -121,6 +121,8 @@ export function resultLine(a: number, o: number, useProj: boolean, decided: bool
   if (!decided) return a === o ? 'Tied (games still to play)' : a > o ? `Leading by ${fmt(a - o)} (games still to play)` : `Trailing by ${fmt(o - a)} (games still to play)`;
   return a >= o ? `Won by ${fmt(a - o)} 🎉` : `Lost by ${fmt(o - a)}`;
 }
+/** v0.0.11: same words as resultLine (so the Leading/Won rule is unchanged), minus the extra sentence. */
+export const shortResult = (line: string) => line.replace(' (games still to play)', ' · games left').replace('. Look for upgrades.', '');
 /** v0.0.8: which games to pull scoring plays for this poll: every in-progress game with a matchup starter, plus a game
  * once more when it turns final or its score changed (catches the last TD). Capped to keep data use light. */
 export function scoringTargets(games: Record<string, LiveGame>, teams: string[], last: Record<string, string>, cap = 8): string[] {
