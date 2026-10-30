@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build + stage the iPhone web app (PWA) into publish-site/<pwa-secret>/ (a STABLE folder: home-screen icons point here).
-# Usage: NOTES="..." bash tools/make_pwa.sh
+# Usage: NOTES="..." bash tools/make_pwa.sh   (STAGE=0: build + leak-check into dist-web/ only, do not touch the staging folder)
 set -euo pipefail
 FF=$(cd "$(dirname "$0")/.." && pwd); CFG=$FF/app/config.local.json
 [ -f "$CFG" ] || { echo "missing app/config.local.json (copy app/config.example.json and fill it in)" >&2; exit 1; }
@@ -44,6 +44,7 @@ cat > $OUT/pwa-version.json <<J
 J
 # fail before staging if any private config value (other than this PWA's own base path) is in the build
 bash $FF/tools/leak-check.sh pwa $OUT "$CFG" || { echo "PWA leak check failed: not staging" >&2; exit 1; }
+[ "${STAGE:-1}" = 0 ] && { echo "built PWA v$VN ($VC) in $OUT (not staged: STAGE=0)"; du -sh $OUT; exit 0; }
 rm -rf $D && mkdir -p $D && cp -r $OUT/. $D/
 # same-site read-only relay (here.now proxy routes): fixed upstreams = host allowlist, GET only, no secrets
 mkdir -p $PUB/.herenow
