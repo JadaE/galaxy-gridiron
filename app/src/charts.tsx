@@ -1,3 +1,4 @@
+import { lineSegments } from './graphpts';
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import Svg, { Rect, Line, Path, Circle, Defs, LinearGradient as SvgGrad, Stop, Text as SvgText, G } from 'react-native-svg';
@@ -171,10 +172,13 @@ export function PctLines({ series, labels, width, height = 190 }: { series: { na
         {[lo, (lo + hi) / 2, hi].map(t => (<G key={t}><Line x1={padL} x2={width - padR} y1={Y(t / 100)} y2={Y(t / 100)} stroke={C.border} strokeWidth={1} strokeDasharray="3,5" /><SvgText x={padL - 4} y={Y(t / 100) + 3} fontSize={9} fill={C.dim} textAnchor="end">{Math.round(t)}%</SvgText></G>))}
         {labels.map((l, i) => <SvgText key={i} x={X(i)} y={height - 5} fontSize={9} fill={C.dim} textAnchor="middle">{l}</SvgText>)}
         {series.map((s, k) => {
-          const pts = s.values.map((v, i) => (v == null ? null : [X(i), Y(v)] as const)).filter(Boolean) as (readonly [number, number])[];
+          // v0.0.12: a dot only for weeks with picks. Solid line between back-to-back picked weeks, dashed across
+          // skipped weeks (never a solid line through a week with no picks).
+          const pts = s.values.map((v, i) => (v == null ? null : { i, x: X(i), y: Y(v) })).filter(Boolean) as { i: number; x: number; y: number }[];
           if (!pts.length) return null;
-          const d = pts.map((p, i) => `${i ? 'L' : 'M'}${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ');
-          return (<G key={k}><Path d={d} stroke={s.color} strokeWidth={k === 0 ? 3 : 2.2} fill="none" strokeLinejoin="round" strokeDasharray={s.dashed ? '5,4' : undefined} />{pts.map((p, i) => <Circle key={i} cx={p[0]} cy={p[1]} r={k === 0 ? 3.4 : 2.6} fill={C.bg} stroke={s.color} strokeWidth={2} />)}</G>);
+          const segs = lineSegments(s.values);
+          const sw = k === 0 ? 3 : 2.2;
+          return (<G key={k}>{segs.map((g, j) => <Line key={j} x1={X(g.from)} y1={Y(s.values[g.from]!)} x2={X(g.to)} y2={Y(s.values[g.to]!)} stroke={s.color} strokeWidth={g.gap ? 1.6 : sw} strokeLinecap="round" strokeDasharray={g.gap || s.dashed ? '4,5' : undefined} strokeOpacity={g.gap ? 0.7 : 1} />)}{pts.map(p => <Circle key={p.i} cx={p.x} cy={p.y} r={k === 0 ? 3.4 : 2.6} fill={C.bg} stroke={s.color} strokeWidth={2} />)}</G>);
         })}
       </Svg>
       <View style={st.legend}>{series.map((s, k) => (<View key={k} style={st.li}><View style={[st.dot, { backgroundColor: s.color }]} /><Text style={st.lt}>{s.name}</Text></View>))}</View>

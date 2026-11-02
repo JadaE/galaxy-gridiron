@@ -23,3 +23,6 @@ export const POS_COLOR: Record<string, string> = {
   QB: '#FF5F8F', RB: '#2FE0B5', WR: '#56B4FF', TE: '#FFA94D', K: '#C7A8FF', DEF: '#B4BDD9', FLEX: '#8E8CFF',
 };
 export const posColor = (p?: string) => POS_COLOR[p || ''] || C.sub;
+
+/** v0.0.12: smaller screen titles that also step down on narrow phones (Android also shrinks-to-fit; web ellipsizes). */
+export const titleSize = (w: number) => (w < 360 ? 18 : w < 400 ? 20 : 22);

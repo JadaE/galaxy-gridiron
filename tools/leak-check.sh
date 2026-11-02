@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Fail if a build contains any private value from app/config.local.json:
-#   keystorePassword, every publishPaths.* value, pwaSecretPath (APK only; the PWA is served under that path), every sleeper.* value,
+#   keystorePassword, legacyKeystorePassword, every publishPaths.* value, every sleeper.* value, updateChannelPath (the private
+#   update channel), picksCollection (the old, pre-password picks collection), feedbackCollection when feedbackEnabled is not true,
+#   pwaSecretPath (APK, and the public web build; only the private family PWA, LEAK_PWA_TARGET=private, is served under it),
+#   and (v0.0.12) the shared leaderboard password from $GG_LEADERBOARD_PASSWORD plus everything derived from it: the full
+#   SHA-256, its 40-char prefix and both family collection names. The app only derives these at runtime from what the user types.
 # or ships config.local.json itself. Searches UTF-8 and UTF-16LE, case-insensitive, in every file (APK: unzipped, incl.
 # assets/index.android.bundle Hermes bytecode and classes*.dex). Never prints a value: only which key leaked and where.
 # Usage: bash tools/leak-check.sh apk <file.apk> [config.json]
@@ -33,7 +37,18 @@ check() { # label value
 }
 check keystorePassword "$(jq -r '.keystorePassword // empty' "$CFG")"
 while IFS=$'\t' read -r k v; do check "publishPaths.$k" "$v"; done < <(jq -r '.publishPaths // {} | to_entries[] | "\(.key)\t\(.value)"' "$CFG")
-[ "$MODE" = apk ] && check pwaSecretPath "$(jq -r '.pwaSecretPath // empty' "$CFG")"
+check legacyKeystorePassword "$(jq -r '.legacyKeystorePassword // empty' "$CFG")"
+{ [ "$MODE" = apk ] || [ "${LEAK_PWA_TARGET:-public}" != private ]; } && check pwaSecretPath "$(jq -r '.pwaSecretPath // empty' "$CFG")"
+check updateChannelPath "$(jq -r '.updateChannelPath // empty' "$CFG")"
+check picksCollection "$(jq -r '.picksCollection // empty' "$CFG")"
+[ -f "$D/keys/picks-collection.txt" ] && check picksCollection "$(tr -d '[:space:]' < "$D/keys/picks-collection.txt")"
+[ "$(jq -r '.feedbackEnabled // false' "$CFG")" = true ] || check feedbackCollection "$(jq -r '.feedbackCollection // empty' "$CFG")"
+if [ -n "${GG_LEADERBOARD_PASSWORD:-}" ]; then
+  check leaderboardPassword "$(printf '%s' "$GG_LEADERBOARD_PASSWORD" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  FH=$(python3 -c 'import hashlib,os;print(hashlib.sha256(("galaxy-gridiron/leaderboard/v1\n"+os.environ["GG_LEADERBOARD_PASSWORD"].strip()).encode()).hexdigest())')
+  check leaderboardHash "$FH"; check leaderboardHashPrefix "${FH:0:40}"; check familyLiveCollection "gg${FH:0:40}"; check familyArchiveCollection "gg${FH:0:40}_a"; FH=
+elif [ "${LEAK_REQUIRE_PASSWORD:-1}" = 1 ]; then echo "leak-check: GG_LEADERBOARD_PASSWORD is not set; cannot check the password or its hash (LEAK_REQUIRE_PASSWORD=0 to skip)" >&2; exit 2
+fi
 while IFS=$'\t' read -r k v; do check "sleeper.$k" "$v"; done < <(jq -r '.sleeper // {} | paths(scalars) as $p | "\($p|join("."))\t\(getpath($p)|tostring)"' "$CFG")
 n=$(find "$TMP/t" -iname 'config.local.json*' | wc -l); [ "$n" = 0 ] || { echo "LEAK: config.local.json is inside the build"; HITS=$((HITS+1)); }
 NF=$(find "$TMP/t" -type f | wc -l)

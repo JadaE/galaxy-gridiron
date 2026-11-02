@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# Build + stage the iPhone web app (PWA) into publish-site/<pwa-secret>/ (a STABLE folder: home-screen icons point here).
-# Usage: NOTES="..." bash tools/make_pwa.sh   (STAGE=0: build + leak-check into dist-web/ only, do not touch the staging folder)
+# Build + stage the iPhone web app (PWA) into a STABLE folder of publish-site (home-screen icons point here).
+# v0.0.12: PWA_TARGET=public (default) builds the store web app under publish-site/<publicWebPath>/ and must not contain
+# the private family path; PWA_TARGET=private builds the family's existing home-screen app under publish-site/<pwaSecretPath>/.
+# Usage: NOTES="..." [PWA_TARGET=public|private] bash tools/make_pwa.sh
+#        (STAGE=0: build + leak-check into dist-web/ only, do not touch the staging folder)
 set -euo pipefail
 FF=$(cd "$(dirname "$0")/.." && pwd); CFG=$FF/app/config.local.json
 [ -f "$CFG" ] || { echo "missing app/config.local.json (copy app/config.example.json and fill it in)" >&2; exit 1; }
 cfg() { jq -r "$1" "$CFG"; }
 PUB=$(cfg '.publishSiteDir // empty'); PUB=${PUB:-$FF/publish-site}  # staging dir uploaded to here.now (keep it persistent: it holds every version folder)
-P=$(cfg .pwaSecretPath); SLUG=$(cfg .siteSlug); OUT=$FF/dist-web; D=$PUB/$P
+TARGET=${PWA_TARGET:-public}
+case "$TARGET" in public) P=$(cfg '.publicWebPath // "play"');; private) P=$(cfg .pwaSecretPath);; *) echo "PWA_TARGET must be public or private" >&2; exit 1;; esac
+PRIV=$(cfg .pwaSecretPath); PUBP=$(cfg '.publicWebPath // "play"')
+SLUG=$(cfg .siteSlug); OUT=$FF/dist-web; D=$PUB/$P
 VN=$(jq -r .expo.version $FF/app/app.json); VC=$(jq -r .expo.android.versionCode $FF/app/app.json)
 bash $FF/tools/gen-appconfig.sh  # bundle ONLY the 4 public config keys; pwaSecretPath is injected below as the base URL only
 cd $FF/app && rm -rf $OUT && PWA_BASE=/$P EXPO_PUBLIC_PWA_BASE=/$P npx expo export --platform web --output-dir $OUT >/tmp/pwa-export.log 2>&1 || { tail -20 /tmp/pwa-export.log; exit 1; }
@@ -43,15 +49,19 @@ cat > $OUT/pwa-version.json <<J
 {"versionCode": $VC, "versionName": "$VN", "apkUrl": "https://$SLUG.here.now/$P/", "notes": $(jq -Rn --arg n "${NOTES:-}" '$n')}
 J
 # fail before staging if any private config value (other than this PWA's own base path) is in the build
-bash $FF/tools/leak-check.sh pwa $OUT "$CFG" || { echo "PWA leak check failed: not staging" >&2; exit 1; }
-[ "${STAGE:-1}" = 0 ] && { echo "built PWA v$VN ($VC) in $OUT (not staged: STAGE=0)"; du -sh $OUT; exit 0; }
+LEAK_PWA_TARGET=$TARGET bash $FF/tools/leak-check.sh pwa $OUT "$CFG" || { echo "PWA leak check failed: not staging" >&2; exit 1; }
+[ "${STAGE:-1}" = 0 ] && { echo "built $TARGET PWA v$VN ($VC) in $OUT (not staged: STAGE=0)"; du -sh $OUT; exit 0; }
 rm -rf $D && mkdir -p $D && cp -r $OUT/. $D/
 # same-site read-only relay (here.now proxy routes): fixed upstreams = host allowlist, GET only, no secrets
 mkdir -p $PUB/.herenow
-cat > $PUB/.herenow/proxy.json <<J
-{"proxies": {
-  "/$P/relay/yt": {"upstream": "https://www.youtube.com/feeds/videos.xml", "method": "GET", "rateLimit": "300/hour/ip"},
-  "/$P/relay/espn/*": {"upstream": "https://site.api.espn.com/apis/site/v2/sports/football/nfl", "method": "GET", "rateLimit": "300/hour/ip"}
-}}
-J
-echo "staged PWA v$VN ($VC) at $D"; du -sh $D
+# both web apps (public + private family) keep their relay routes, whichever one is staged
+python3 - "$PUB/.herenow/proxy.json" "$PUBP" "$PRIV" <<'PY'
+import json, sys
+out = {"proxies": {}}
+for P in sys.argv[2:]:
+    if not P or P == 'null': continue
+    out["proxies"][f"/{P}/relay/yt"] = {"upstream": "https://www.youtube.com/feeds/videos.xml", "method": "GET", "rateLimit": "300/hour/ip"}
+    out["proxies"][f"/{P}/relay/espn/*"] = {"upstream": "https://site.api.espn.com/apis/site/v2/sports/football/nfl", "method": "GET", "rateLimit": "300/hour/ip"}
+open(sys.argv[1], 'w').write(json.dumps(out, indent=2) + "\n")
+PY
+echo "staged $TARGET PWA v$VN ($VC) at $D"; du -sh $D
