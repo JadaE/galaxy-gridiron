@@ -21,6 +21,10 @@ import PlayerSheet from './src/screens/PlayerSheet';
 import Settings from './src/screens/Settings';
 import './src/ai/secure'; // installs encrypted device storage for the AI pairing token
 import { checkForUpdate, dismissed, dismiss, UpdateInfo } from './src/update';
+import { restoreOnStart, restoreMessage } from './src/picks/restore';
+import { loadPicks, savePicks } from './src/picks/store';
+import { loadWeek, nflNow } from './src/picks/espn';
+import { getSecret } from './src/ai/secure';
 
 const TABS = [
   { k: 'Team', icon: '🏠' }, { k: 'Matchup', icon: '⚔️' }, { k: 'League', icon: '🏆' },
@@ -41,6 +45,7 @@ function Galaxy({ children }: { children: React.ReactNode }) {
 
 function Main() {
   const insets = useInsets();
+  const [note, setNote] = useState('');
   const [phase, setPhase] = useState<'boot' | 'onboard' | 'loading' | 'ready' | 'error'>('boot');
   const [username, setUsername] = useState('');
   const [me, setMe] = useState<{ user_id: string; username: string; display_name?: string; avatar?: string } | null>(null);
@@ -96,6 +101,17 @@ function Main() {
       setMsg('Loading players & projections (first launch can take ~10s)…');
       await openLeague(pick.league_id, u.user_id);
       setPhase('ready');
+      // v0.0.13: bring this user's shared picks back from the leaderboard (reinstall / new phone). Never re-shares them.
+      (async () => {
+        try {
+          const n = await nflNow();
+          const hadLocal = Object.keys(await loadPicks(u.user_id, n.season)).length > 0;
+          const r = await restoreOnStart({ uid: u.user_id, username: u.username || name, display: u.display_name }, () => getSecret('lb_family'),
+            { season: n.season, curWeek: n.week, load: () => loadPicks(u.user_id, n.season), save: p => savePicks(u.user_id, n.season, p), loadWeek: (s, w) => loadWeek(s, w) });
+          const m = restoreMessage(r, hadLocal);
+          if (m) { setNote(m); setTimeout(() => setNote(x => (x === m ? '' : x)), 6000); }
+        } catch {}
+      })();
     } catch (e: any) { setErr(e?.message || String(e)); setPhase('error'); }
   }, [openLeague]);
 
@@ -180,6 +196,7 @@ function Main() {
             );
           })}
         </View>
+        {note ? <Pressable onPress={() => setNote('')} style={{ position: 'absolute', left: 20, right: 20, bottom: Math.max(insets.bottom, 6) + 140, backgroundColor: C.card2, borderRadius: 14, padding: 12, borderWidth: 1, borderColor: C.mint + '88' }}><Text style={{ color: C.text, textAlign: 'center', fontSize: 13 }}>{note}</Text></Pressable> : null}
         {refreshing ? <View style={{ position: 'absolute', top: 40, right: 16 }}><ActivityIndicator color={C.mint} /></View> : null}
         <Pressable onPress={() => setChatOpen(true)} style={{ position: 'absolute', right: 16, bottom: Math.max(insets.bottom, 6) + 72, borderRadius: 28, overflow: 'hidden', elevation: 6, shadowColor: C.purple, shadowOpacity: 0.6, shadowRadius: 10 }}>
           <LinearGradient colors={[C.mint, C.purple]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={{ width: 56, height: 56, alignItems: 'center', justifyContent: 'center' }}>

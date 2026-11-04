@@ -3,7 +3,7 @@ export type Side = { abbr: string; name: string; short: string; logo?: string; s
 export type GameState = 'pre' | 'in' | 'post' | 'off'; // off = postponed / canceled / suspended
 export type Game = { id: string; week: number; season: number; kickoff: number; home: Side; away: Side; state: GameState; detail: string; winner: string | null; tie: boolean; neutral?: boolean };
 export type PickSrc = 'live' | 'backfill' | 'paste' | 'import';
-export type Pick = { team: string; week: number; at: number; src: PickSrc };
+export type Pick = { team: string; week: number; at: number; src: PickSrc; rs?: 1 }; // rs: restored from the leaderboard (v0.0.13), not re-shared
 export type PickMap = Record<string, Pick>; // gameId -> pick
 export type Grade = 'W' | 'L' | 'NR' | 'pending' | 'none';
 
