@@ -40,7 +40,7 @@ s=s[:j]+"signingConfig signingConfigs.release"+s[j+len("signingConfig signingCon
 open(p,'w').write(s)
 PY
 fi
-export GG_KEYSTORE=$ROOT/keys/galaxy-gridiron.keystore
+export GG_KEYSTORE=$ROOT/$(cfg .keystorePath 2>/dev/null | grep -v "^null$" || true); [ "$GG_KEYSTORE" = "$ROOT/" ] && GG_KEYSTORE=$ROOT/keys/galaxy-gridiron.keystore
 export GG_KEYPASS=$(cfg .keystorePassword)
 cd android
 ./gradlew assembleRelease -PreactNativeArchitectures=arm64-v8a,x86_64 -Dorg.gradle.jvmargs="-Xmx3g -XX:MaxMetaspaceSize=768m" --max-workers=4 --no-daemon

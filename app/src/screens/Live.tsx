@@ -1,5 +1,6 @@
 // v0.0.7: Live game day card for the Matchup tab: live points for your starters and your opponent's, game clock,
 // possession, a win-chance bar that moves with the games, and a scoring-play feed for the players in this matchup.
+import { sideNotes } from '../matchupnote';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { View, Text, AppState, Pressable, Animated, Easing, Linking, Modal } from 'react-native';
 import { useInsets } from '../safe';
@@ -97,7 +98,8 @@ export default function LiveCard({ week }: { week: number }) {
   feed.sort((x, y) => order(y.p) - order(x.p));
   const shown = showAll ? feed : feed.slice(0, 6);
 
-  const status = !started ? 'Kickoff ' + (Object.values(games || {}).length ? nextKick(mr.concat(or), games) : 'soon') : allFinal ? 'All games final' : `${mo.left + oo.left} players still to play`;
+  const status = !started ? 'Kickoff ' + (Object.values(games || {}).length ? nextKick(mr.concat(or), games) : 'soon') : allFinal ? 'All games final' : '';
+  const notes = sideNotes(mo.left, oo.left, started, allFinal);
   return (
     <Card accent={C.red}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
@@ -126,7 +128,11 @@ export default function LiveCard({ week }: { week: number }) {
         <LinearGradient colors={[C.mint, '#4FE3D2']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ width: `${Math.max(3, Math.min(97, wp * 100))}%` as any }} />
         <LinearGradient colors={[C.purple, C.magenta]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ flex: 1 }} />
       </View>
-      <Text style={[T.sub, { marginTop: 6, fontSize: 11 }]}>{status}</Text>
+      {status ? <Text style={[T.sub, { marginTop: 6, fontSize: 11 }]}>{status}</Text> : (
+        <View style={{ flexDirection: 'row', marginTop: 6 }}>
+          <Text style={[T.sub, { flex: 1, fontSize: 11 }]}>{notes.me}</Text>
+          <Text style={[T.sub, { flex: 1, fontSize: 11, textAlign: 'right' }]}>{notes.opp}</Text>
+        </View>)}
 
       {/* player by player */}
       <View style={{ marginTop: 10 }}>

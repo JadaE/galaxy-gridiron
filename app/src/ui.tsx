@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useMemo } from 'react';
+import { titleSize } from './theme';
+import React, { createContext, useContext, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, Image, Pressable, ScrollView, RefreshControl, useWindowDimensions } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Svg, { Circle } from 'react-native-svg';
@@ -28,17 +29,21 @@ export function Header({ title, subtitle, right, pill, info }: { title: string; 
   const { width } = useWindowDimensions();
   const { b, openLeagues } = useApp();
   const insets = useSafeAreaInsets();
+  // v0.0.12: the header grows with its content + the status-bar inset; the stars fill whatever height it ends up with
+  // (it used to draw a fixed 130 px starfield, and cards below could ride up over the purple header).
+  const [hh, setHh] = useState(160);
   return (
-    <LinearGradient colors={['#2A1B5E', '#151A3A', C.bg]} start={{ x: 0, y: 0 }} end={{ x: 0.6, y: 1 }} style={[s.header, { paddingTop: Math.max(44, insets.top + 14) }]}>
+    <LinearGradient colors={['#2A1B5E', '#151A3A', C.bg]} start={{ x: 0, y: 0 }} end={{ x: 0.6, y: 1 }} style={[s.header, { paddingTop: Math.max(44, insets.top + 14) }]}
+      onLayout={e => { const h = Math.ceil(e.nativeEvent.layout.height); if (Math.abs(h - hh) > 2) setHh(h); }}>
       <LinearGradient colors={['rgba(198,76,255,0.35)', 'rgba(198,76,255,0)']} start={{ x: 1, y: 0 }} end={{ x: 0.3, y: 0.9 }} style={StyleSheet.absoluteFill} />
-      <Stars w={width} h={130} />
+      <Stars w={width} h={hh} />
       {pill ? <View style={s.leaguePill}><Text style={s.leaguePillTxt} numberOfLines={1}>{pill}</Text></View> : (
       <Pressable onPress={openLeagues} style={s.leaguePill}>
         <Text style={s.leaguePillTxt} numberOfLines={1}>{b.league.name} · {b.season}{b.isPast ? ' (past)' : ''} ▾</Text>
       </Pressable>)}
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end' }}>
-        <View style={{ flex: 1 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}><Text style={[s.title, { flexShrink: 1 }]} numberOfLines={1}>{title}</Text>{info ? <InfoButton k={info} /> : null}</View>
+      <View style={{ flexDirection: 'row', alignItems: 'flex-end', gap: 8 }}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}><Text style={[s.title, { flexShrink: 1, fontSize: titleSize(width) }]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.7}>{title}</Text>{info ? <InfoButton k={info} /> : null}</View>
           {subtitle ? <Text style={s.subtitle}>{subtitle}</Text> : null}
         </View>
         {right}
@@ -53,7 +58,7 @@ export function Screen({ title, subtitle, children, right, info }: { title: stri
     <ScrollView style={{ flex: 1, backgroundColor: C.bg }} contentContainerStyle={{ paddingBottom: 28 }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={C.mint} colors={[C.mint]} progressBackgroundColor={C.card} />}>
       <Header title={title} subtitle={subtitle} right={right} info={info} />
-      <View style={{ paddingHorizontal: 14, gap: 12, marginTop: -6 }}>{children}</View>
+      <View style={{ paddingHorizontal: 14, gap: 12, marginTop: 2 }}>{children}</View>
     </ScrollView>
   );
 }

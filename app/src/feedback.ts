@@ -3,7 +3,10 @@
 import { Platform } from 'react-native';
 import { VERSION_NAME, VERSION_CODE } from './version';
 import { SITE } from './picks/sync';
-import { FEEDBACK_COLLECTION_ID } from './config';
+import { FEEDBACK_COLLECTION_ID, FEEDBACK_ENABLED } from './config';
+
+// v0.0.12: one switch (feedbackEnabled in the config). Off in the store version until a shared backend exists.
+export const feedbackOn = () => FEEDBACK_ENABLED;
 
 export const FEEDBACK_COLLECTION = FEEDBACK_COLLECTION_ID;
 const URL_ = `${SITE}/.herenow/data/${FEEDBACK_COLLECTION}`;
@@ -28,6 +31,7 @@ export function buildRecord(f: Feedback) {
 }
 
 export async function sendFeedback(f: Feedback, fetcher: typeof fetch = fetch): Promise<void> {
+  if (!FEEDBACK_ENABLED) throw new Error('Feedback is paused in this version.');
   const rec = buildRecord(f);
   let r: Response;
   try {

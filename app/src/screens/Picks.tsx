@@ -1,5 +1,5 @@
 // NFL game Picks: weekly pick'em tracker outside the fantasy leagues. Schedule + scores from ESPN's public
-// scoreboard, picks stored on the phone per Sleeper user, optional shared leaderboard (honor system).
+// scoreboard, picks stored on the phone per Sleeper user, optional shared leaderboard (friends & family, unlocked with a shared password; v0.0.12).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInsets, useBottomPad } from '../safe';
 import { View, Text, ScrollView, Pressable, Image, RefreshControl, useWindowDimensions, Platform, Modal, TextInput, Share, ActivityIndicator, KeyboardAvoidingView } from 'react-native';
@@ -8,13 +8,16 @@ import { Header, Card, T, useApp } from '../ui';
 import { InfoButton } from './Info';
 import { C } from '../theme';
 import { PickChart, PctLines } from '../charts';
+import { runningPctPoints } from '../graphpts';
 import { avatarUrl, sleeper } from '../api';
 import { Game, Pick, PickMap, grade, weekRecord, seasonRecord, canPick, started, pct, pctStr, recStr, exportFile, parseImport, mergePicks } from '../picks/core';
 import { loadWeek, nflNow, REG_WEEKS } from '../picks/espn';
 import { loadPicks, savePicks, loadLbMe, saveLbMe, LbMe, loadPref, savePref } from '../picks/store';
 import { parseNotes, ParseResult } from '../picks/parse';
 import { TEAMS } from '../picks/teams';
-import { fetchSnaps, resolve, snapshotFor, enqueue, flush, pendingCount, Person } from '../picks/sync';
+import { fetchSnaps, resolve, snapshotFor, enqueue, flush, pendingCount, Person, setFamilyKey, probeFamilyKey } from '../picks/sync';
+import { deriveFamilyKey, validKey, FamilyKey } from '../picks/family';
+import { getSecret, setSecret, delSecret } from '../ai/secure';
 
 const qp = (k: string) => (Platform.OS === 'web' && typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get(k) : null);
 const tz = 'America/Chicago';
@@ -123,6 +126,8 @@ export default function Picks() {
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
   const [lbMe, setLbMe] = useState<LbMe | null>(null);
+  // v0.0.12: derived family-leaderboard collections (never the password). null = no shared leaderboard on this device.
+  const [fk, setFk] = useState<FamilyKey | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [lbState, setLbState] = useState<{ loading?: boolean; err?: string; stale?: boolean; pending?: number; at?: number }>({});
   const [inclBf, setInclBf] = useState(true);
@@ -149,6 +154,7 @@ export default function Picks() {
       setErr('');
     } catch (e: any) { setErr(e?.message || String(e)); }
   }, [uid]);
+  useEffect(() => { getSecret('lb_family').then(v => { let k: any = null; try { k = JSON.parse(v || 'null'); } catch {} if (validKey(k)) { setFamilyKey(k); setFk(k); } }); }, []);
   useEffect(() => { loadAll(); loadLbMe(uid).then(setLbMe); loadPref('inclBf', '1').then(v => setInclBf(v === '1')); }, [uid]);
 
   // demo seeding for screenshots (?seedpicks=1): sample picks for finished weeks, marked backfilled
@@ -185,28 +191,28 @@ export default function Picks() {
       setLbState({ stale: r.stale, pending: f.left, at: Date.now(), err: f.error && f.left ? `Couldn't sync yet (${f.error}); ${f.left} update${f.left > 1 ? 's' : ''} queued` : undefined });
     } catch (e: any) { setLbState({ err: 'Leaderboard offline: ' + (e?.message || e), pending: await pendingCount() }); }
   }, [season, allGames, lbMe, uid, curWeek, byWeek]);
-  useEffect(() => { if (lbMe || qp('lbsample')) loadBoard(); }, [lbMe, season, Object.keys(byWeek).length]);
+  useEffect(() => { if ((lbMe && fk) || qp('lbsample')) loadBoard(); }, [lbMe, fk, season, Object.keys(byWeek).length]);
 
   const flash = (t: string) => { setToast(t); setTimeout(() => setToast(x => (x === t ? '' : x)), 2600); };
   const commit = useCallback(async (next: PickMap, weeks: number[]) => {
     picksRef.current = next; setPicks(next);
     await savePicks(uid, season, next);
-    if (lbMe) {
+    if (lbMe && fk) {
       for (const w of new Set(weeks)) await enqueue(snapshotFor(lbMe, season, w, next));
       clearTimeout(flushT.current);
       flushT.current = setTimeout(() => flush().then(r => setLbState(s => ({ ...s, pending: r.left, err: r.error && r.left ? `Saved on your phone; sharing when back online (${r.left} queued)` : undefined }))), 2500);
     }
-  }, [uid, season, lbMe]);
+  }, [uid, season, lbMe, fk]);
 
   // picks imported from Settings › Picks data: share those weeks once the leaderboard identity is known
   useEffect(() => { (async () => {
-    if (!lbMe || !season) return;
+    if (!lbMe || !fk || !season) return;
     const raw = await loadPref('resync:' + uid, '');
     if (!raw) return;
     await savePref('resync:' + uid, '');
     const p = await loadPicks(uid, season); picksRef.current = p; setPicks(p);
     try { commit(p, JSON.parse(raw)); } catch {}
-  })(); }, [lbMe, season, uid]);
+  })(); }, [lbMe, fk, season, uid]);
 
   const onPick = useCallback((g: Game, abbr: string) => {
     const cur = picksRef.current[g.id];
@@ -232,7 +238,7 @@ export default function Picks() {
   const groups = useMemo(() => { const m: [string, Game[]][] = []; for (const g of games) { const k = dayKey(g.kickoff); const last = m[m.length - 1]; if (last && last[0] === k) last[1].push(g); else m.push([k, [g]]); } return m; }, [games]);
   const cw = width - 28 - 24;
 
-  const refresh = async () => { setRefreshing(true); await loadAll(true); if (lbMe) await loadBoard(true); setRefreshing(false); };
+  const refresh = async () => { setRefreshing(true); await loadAll(true); if (lbMe && fk) await loadBoard(true); setRefreshing(false); };
 
   return (
     <View style={{ flex: 1, backgroundColor: C.bg }}>
@@ -319,7 +325,16 @@ export default function Picks() {
           )}
 
           {view === 'board' && (
-            <Board me={me} lbMe={lbMe} people={people} byWeek={byWeek} weeks={weeks} myPicks={picks} curWeek={curWeek} width={cw} inclBf={inclBf}
+            <Board me={me} lbMe={lbMe} locked={!fk}
+              onUnlock={async (pw) => {
+                const k = deriveFamilyKey(pw);
+                const r = await probeFamilyKey(k);
+                if (r !== 'ok') return r;
+                await setSecret('lb_family', JSON.stringify(k)); setFamilyKey(k); setFk(k);
+                if (!lbMe) setSheet('join');
+                return 'ok';
+              }}
+              onLock={async () => { await delSecret('lb_family'); setFamilyKey(null); setFk(null); setPeople([]); }} people={people} byWeek={byWeek} weeks={weeks} myPicks={picks} curWeek={curWeek} width={cw} inclBf={inclBf}
               setInclBf={v => { setInclBf(v); savePref('inclBf', v ? '1' : '0'); }} state={lbState} onJoin={() => setSheet('join')} onReload={() => loadBoard(true)}
               onLeave={async () => { await saveLbMe(uid, null); setLbMe(null); setPeople([]); }} />
           )}
@@ -352,15 +367,17 @@ export default function Picks() {
 }
 
 // ---------------- Leaderboard ----------------
-function Board({ me, lbMe, people, byWeek, weeks, myPicks, curWeek, width, inclBf, setInclBf, state, onJoin, onReload, onLeave }: {
+function Board({ me, lbMe, locked, onUnlock, onLock, people, byWeek, weeks, myPicks, curWeek, width, inclBf, setInclBf, state, onJoin, onReload, onLeave }: {
   me: { user_id: string; username: string; display_name?: string; avatar?: string }; lbMe: LbMe | null; people: Person[]; byWeek: Record<number, Game[]>; weeks: number[]; myPicks: PickMap; curWeek: number; width: number;
   inclBf: boolean; setInclBf: (v: boolean) => void; state: { loading?: boolean; err?: string; stale?: boolean; pending?: number; at?: number }; onJoin: () => void; onReload: () => void; onLeave: () => void;
+  locked: boolean; onUnlock: (pw: string) => Promise<'ok' | 'wrong' | 'offline'>; onLock: () => void;
 }) {
   const sample = people.some(p => p.sample);
+  if (locked && !sample) return <UnlockCard onUnlock={onUnlock} />;
   if (!lbMe && !sample) return (
     <Card title="Shared leaderboard" emoji="🏆" accent={C.gold}>
       <Text style={T.body}>See how your picks stack up against friends and anyone else in your leagues who uses Galaxy Gridiron.</Text>
-      <Text style={[T.sub, { marginTop: 6 }]}>No logins: you choose your Sleeper username once and your picks are shared under it (honor system). Other people's picks for a game stay hidden in the app until it kicks off.</Text>
+      <Text style={[T.sub, { marginTop: 6 }]}>You choose your Sleeper username once and your picks are shared under it with everyone who has the leaderboard password. Other people's picks for a game stay hidden in the app until it kicks off.</Text>
       <Pressable onPress={onJoin} style={{ borderRadius: 14, overflow: 'hidden', marginTop: 12 }}><LinearGradient colors={[C.gold, C.magenta]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ padding: 13, alignItems: 'center' }}><Text style={{ color: '#fff', fontWeight: '900' }}>Join the leaderboard</Text></LinearGradient></Pressable>
     </Card>
   );
@@ -399,9 +416,10 @@ function Board({ me, lbMe, people, byWeek, weeks, myPicks, curWeek, width, inclB
         {lbMe ? <Text style={[T.sub, { marginTop: 8 }]}>Sharing as {lbMe.un}{state.pending ? ` · ${state.pending} update${state.pending > 1 ? 's' : ''} waiting to sync` : ' · synced'}{state.stale ? ' · offline copy' : ''}. Tap (i) for how it works.</Text> : null}
         {state.err ? <Text style={{ color: C.gold, fontSize: 12, marginTop: 4 }}>{state.err}</Text> : null}
         {lbMe ? <Pressable onPress={onLeave} style={{ marginTop: 8 }}><Text style={{ color: C.dim, fontSize: 12 }}>Stop sharing on this phone</Text></Pressable> : null}
+        {!sample ? <Pressable onPress={onLock} style={{ marginTop: 6 }}><Text style={{ color: C.dim, fontSize: 12 }}>Forget the leaderboard password on this phone</Text></Pressable> : null}
       </Card>
-      <Card title="Running win % by week" emoji="🌌">
-        <PctLines width={width} labels={played.map(w => 'W' + w)} series={rows.map(r => ({ name: r.p.un + (r.me ? ' (you)' : ''), color: colorOf(r.p.uid), values: played.map(w => r.s.rows.find(x => x.week === w)?.cumPct ?? null) }))} />
+      <Card title="Running win % by week" emoji="🌌" right={<Text style={T.sub}>dashes = weeks skipped</Text>}>
+        <PctLines width={width} labels={played.map(w => 'W' + w)} series={rows.map(r => ({ name: r.p.un + (r.me ? ' (you)' : ''), color: colorOf(r.p.uid), values: runningPctPoints(r.s.rows, played) }))} />
       </Card>
       <Card title="Picks by week" emoji="🗓️">
         <WeekGrid rows={rows.map(r => ({ uid: r.p.uid, name: r.p.un.replace(' (sample)', '*'), color: colorOf(r.p.uid), recs: Object.fromEntries(r.s.rows.map(y => [y.week, y.rec])) }))} weeks={[...played].reverse()} width={width} />
@@ -447,6 +465,28 @@ function WeekGrid({ rows, weeks, width }: { rows: { uid: string; name: string; c
       </View>
       {more ? <Text style={{ color: C.mint, fontSize: 11, marginTop: 4, textAlign: 'right' }}>Swipe for older weeks ›</Text> : null}
     </View>
+  );
+}
+
+/** v0.0.12: the shared leaderboard is for friends and family. The password is turned into the leaderboard's address on
+ * this phone with a one-way hash; the password itself is never saved or sent anywhere. */
+function UnlockCard({ onUnlock }: { onUnlock: (pw: string) => Promise<'ok' | 'wrong' | 'offline'> }) {
+  const [pw, setPw] = useState('');
+  const [st, setSt] = useState<{ busy?: boolean; err?: string }>({});
+  const go = async () => {
+    setSt({ busy: true });
+    const r = await onUnlock(pw);
+    if (r === 'ok') { setPw(''); setSt({}); return; }
+    setSt({ err: r === 'wrong' ? "That password didn't work. Check with the app owner." : "Couldn't check right now. Try again when you have signal." });
+  };
+  return (
+    <Card title="Shared leaderboard" emoji="🔒" accent={C.gold}>
+      <Text style={T.body}>The shared leaderboard is for friends and family. Ask the app owner for the leaderboard password, then enter it once here.</Text>
+      <Text style={[T.sub, { marginTop: 6 }]}>Your own picks and records work without it. They just stay on this phone.</Text>
+      <TextInput value={pw} onChangeText={t => { setPw(t); if (st.err) setSt({}); }} placeholder="Leaderboard password" placeholderTextColor={C.dim} secureTextEntry autoCapitalize="none" autoCorrect={false} style={[input, { marginTop: 10 }]} onSubmitEditing={go} />
+      <View style={{ flexDirection: 'row', marginTop: 10 }}><Btn label={st.busy ? 'Checking…' : 'Unlock leaderboard'} onPress={go} disabled={!pw.trim() || !!st.busy} /></View>
+      {st.err ? <Text style={{ color: C.red, marginTop: 8, fontSize: 12.5 }}>{st.err}</Text> : null}
+    </Card>
   );
 }
 
@@ -612,7 +652,7 @@ function JoinSheet({ open, onClose, defaultName, onJoin }: { open: boolean; onCl
           <View style={{ flexDirection: 'row' }}><Btn label={`Join as ${u.display_name || u.username}`} onPress={() => onJoin(u)} /></View>
         </>
       ) : null}
-      <Text style={[T.sub, { marginTop: 4 }]}>Honor system: no password, so please only use your own name. Picks are shared on a private, unlisted link that only this app knows.</Text>
+      <Text style={[T.sub, { marginTop: 4 }]}>Please only use your own name. Your picks are shared only with people who have the leaderboard password.</Text>
     </Sheet>
   );
 }

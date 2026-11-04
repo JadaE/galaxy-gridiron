@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { View, Text, TextInput, Pressable, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform } from 'react-native';
 import { useBottomPad } from '../safe';
 import { useApp } from '../ui';
-import { sendFeedback, FeedbackKind } from '../feedback';
+import { sendFeedback, FeedbackKind, feedbackOn } from '../feedback';
 import { ExportSheet, ImportSheet } from './Picks';
 import { loadPicks, savePicks, savePref } from '../picks/store';
 import { exportFile, mergePicks, PickMap } from '../picks/core';
@@ -111,8 +111,9 @@ export default function Settings({ onClose, section }: { onClose: () => void; se
         {pk ? <ExportSheet open={pkSheet === 'export'} onClose={() => setPkSheet(null)} text={JSON.stringify(exportFile(me.user_id, me.username, pk.season, pk.picks), null, 1)} n={Object.keys(pk.picks).length} /> : null}
         <ImportSheet open={pkSheet === 'import'} onClose={() => setPkSheet(null)} onImport={doImport} />
 
-        <Card title="Help & feedback" emoji="💌" accent={C.magenta}>
+        <Card title={feedbackOn() ? 'Help & feedback' : 'Help'} emoji="💌" accent={C.magenta}>
           <View style={{ flexDirection: 'row', marginBottom: 12 }}><Btn kind="ghost" label="🎓 Replay tutorial" onPress={openTutorial} /></View>
+          {feedbackOn() ? (<>
           <Text style={{ color: C.sub, fontSize: 11, fontWeight: '700', marginBottom: 6 }}>SEND FEEDBACK</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
             {(['bug', 'idea'] as const).map(k => (
@@ -127,6 +128,7 @@ export default function Settings({ onClose, section }: { onClose: () => void; se
           <View style={{ flexDirection: 'row', marginTop: 10 }}><Btn label={fbState.busy ? 'Sending…' : 'Send feedback'} onPress={submitFb} disabled={!!fbState.busy || fbText.trim().length < 3} /></View>
           {fbState.ok ? <Text style={{ color: C.green, marginTop: 8, fontSize: 12.5 }}>{fbState.ok}</Text> : fbState.err ? <Text style={{ color: C.red, marginTop: 8, fontSize: 12.5 }}>{fbState.err}</Text> : null}
           <Text style={[T.sub, { marginTop: 10, color: C.dim }]}>Attached automatically: app v{VERSION_NAME}, your Sleeper username{me?.username ? ` (${me.display_name || me.username})` : ''}, and your device/OS. Nothing else.</Text>
+          </>) : <Text style={T.sub}>Sending feedback from the app is paused in this version. It comes back once the app has a shared backend.</Text>}
         </Card>
 
         <Card title="AI chat" emoji="🛰️" accent={C.mint}>

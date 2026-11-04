@@ -1,14 +1,18 @@
 {
   "siteSlug": "YOUR-SITE-SLUG",
   "updateChannelPath": "YOUR_UPDATE_CHANNEL_PATH",
+  "publicUpdatePath": "store",
+  "publicWebPath": "play",
   "picksCollection": "YOUR_COLLECTION_ID",
   "feedbackCollection": "YOUR_COLLECTION_ID",
+  "feedbackEnabled": false,
   "pwaSecretPath": "YOUR_SECRET_PATH",
   "publishPaths": {
     "v001": "YOUR_SECRET_PATH",
     "v002": "YOUR_SECRET_PATH"
   },
   "keystorePassword": "YOUR_KEYSTORE_PASSWORD",
+  "keystorePath": "keys/YOUR_KEYSTORE_FILE.keystore",
   "neverPublishTo": [],
   "sleeper": {
     "username": "YOUR_SLEEPER_USERNAME",

@@ -1,7 +1,8 @@
-// Run: npx tsx tests/sync.test.ts  (mocked store; plus one live read of the real collection)
+// Run: npx tsx tests/sync.test.ts  (mocked store and network only)
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import { setKv, resolve, snapshotFor, enqueue, flush, pendingCount, fetchSnaps, Snap } from '../src/picks/sync';
+import { setKv, resolve, snapshotFor, enqueue, flush, pendingCount, fetchSnaps, Snap, setFamilyKey, hasFamilyKey, probeFamilyKey } from '../src/picks/sync';
+import { deriveFamilyKey } from '../src/picks/family';
 import { SITE_ORIGIN as SITE } from '../src/config';
 import { Game, weekRecord } from '../src/picks/core';
 let pass = 0, fail = 0;
@@ -42,6 +43,17 @@ setKv(async k => mem[k] ?? null, async (k, v) => { mem[k] = v; });
   await t('latest username/avatar wins per user id', () => { const p = resolve([snap({ un: 'old', createdAt: 1 }), snap({ un: 'friend1', av: 'abc', createdAt: 2 })], games)[0]; assert.equal(p.un, 'friend1'); assert.equal(p.av, 'abc'); });
 
   console.log('Offline queue');
+  await t('no family password: nothing is sent and the board stays locked', async () => {
+    setFamilyKey(null); assert.equal(hasFamilyKey(), false);
+    await enqueue(snapshotFor({ uid: '1000000000000000008', un: 'nokey' }, 2026, 7, { '401873010': { team: 'CHI', week: 7, at: 1, src: 'live' } }));
+    let called = 0;
+    const r = await flush((async () => { called++; return new Response('{}', { status: 201 }); }) as any);
+    assert.equal(called, 0); assert.equal(r.sent, 0);
+    await assert.rejects(fetchSnaps(2026, true, (async () => { called++; return new Response('{}'); }) as any), /locked/);
+    assert.equal(called, 0);
+    for (const k of Object.keys(mem)) delete mem[k];
+  });
+  setFamilyKey(deriveFamilyKey('mock-family-password'));
   await t('one queued snapshot per user+week; offline keeps it; next flush sends it with Origin + Idempotency-Key', async () => {
     const me = { uid: '1000000000000000007', un: 'testuser' };
     await enqueue(snapshotFor(me, 2026, 7, { '401873010': { team: 'CHI', week: 7, at: 1, src: 'live' } }));
@@ -57,10 +69,31 @@ setKv(async k => mem[k] ?? null, async (k, v) => { mem[k] = v; });
     assert.equal(seen.headers.Origin, SITE); assert.ok(seen.headers['Idempotency-Key']);
     assert.equal(JSON.parse(seen.body).picks['401873010'], 'NE');
   });
-  await t('live read of the real collection (self-test rows are filtered out)', async () => {
-    if (/YOUR-SITE-SLUG/.test(SITE)) { console.log('      skipped (placeholder config)'); return; }
-    const r = await fetchSnaps(2026, true);
-    assert.ok(Array.isArray(r.snaps)); assert.ok(r.snaps.every(s => !s.un.startsWith('_')));
+  await t('writes and reads go only to the derived collections; archive keeps original times', async () => {
+    const k = deriveFamilyKey('mock-family-password');
+    const urls: string[] = [];
+    const rec = (createdAt: string, extra: any = {}) => ({ id: 'x' + Math.random(), createdAt, data: { app: 'gg', uid: '1000000000000000009', un: 'friend2', season: 2026, week: 6, picks: { [g6.id]: g6.home.abbr }, bf: {}, ts: 1, ...extra } });
+    const before = new Date(g6.kickoff - 3600e3).toISOString(), after = new Date(g6.kickoff + 86400e3).toISOString();
+    const f = (async (u: string) => {
+      urls.push(u);
+      if (u.includes('/' + k.archive + '?')) return new Response(JSON.stringify({ records: [rec(after, { oc: g6.kickoff - 7200e3 })] }));
+      return new Response(JSON.stringify({ records: [rec(after, { oc: g6.kickoff - 7200e3 })] }));
+    }) as any;
+    const r = await fetchSnaps(2026, true, f);
+    assert.equal(urls.length, 2);
+    assert.ok(urls[0].includes('/.herenow/data/' + k.live + '?')); assert.ok(urls[1].includes('/.herenow/data/' + k.archive + '?'));
+    const [live, arch] = r.snaps;
+    assert.equal(live.createdAt, Date.parse(after), 'oc is ignored in the public collection');
+    assert.equal(arch.createdAt, g6.kickoff - 7200e3, 'oc is trusted in the owner-only archive');
+    // a missing archive (404) is fine
+    const r2 = await fetchSnaps(2026, true, (async (u: string) => (u.includes(k.archive) ? new Response('{}', { status: 404 }) : new Response(JSON.stringify({ records: [rec(before)] })))) as any);
+    assert.equal(r2.snaps.length, 1);
+  });
+  await t('password check: 200 = ok, 404 (collection not active) = wrong, network error = offline', async () => {
+    const k = deriveFamilyKey('mock-family-password');
+    assert.equal(await probeFamilyKey(k, (async () => new Response('{"records":[]}')) as any), 'ok');
+    assert.equal(await probeFamilyKey(k, (async () => new Response('{"code":"collection_disabled"}', { status: 404 })) as any), 'wrong');
+    assert.equal(await probeFamilyKey(k, (async () => { throw new Error('net'); }) as any), 'offline');
   });
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);
