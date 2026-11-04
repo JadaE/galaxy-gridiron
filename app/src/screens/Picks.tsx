@@ -18,6 +18,7 @@ import { TEAMS } from '../picks/teams';
 import { fetchSnaps, resolve, snapshotFor, enqueue, flush, pendingCount, Person, setFamilyKey, probeFamilyKey } from '../picks/sync';
 import { deriveFamilyKey, validKey, FamilyKey } from '../picks/family';
 import { getSecret, setSecret, delSecret } from '../ai/secure';
+import { restoreFromServer, onRestored, mergeRestored, weeksToShare, restoreMessage } from '../picks/restore';
 
 const qp = (k: string) => (Platform.OS === 'web' && typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get(k) : null);
 const tz = 'America/Chicago';
@@ -155,6 +156,8 @@ export default function Picks() {
     } catch (e: any) { setErr(e?.message || String(e)); }
   }, [uid]);
   useEffect(() => { getSecret('lb_family').then(v => { let k: any = null; try { k = JSON.parse(v || 'null'); } catch {} if (validKey(k)) { setFamilyKey(k); setFk(k); } }); }, []);
+  // v0.0.13: picks restored from the leaderboard (at app start or after the password) show up here too
+  useEffect(() => onRestored(async () => { if (!season) return; const r = mergeRestored(picksRef.current, await loadPicks(uid, season)); picksRef.current = r.picks; setPicks(r.picks); }), [uid, season]);
   useEffect(() => { loadAll(); loadLbMe(uid).then(setLbMe); loadPref('inclBf', '1').then(v => setInclBf(v === '1')); }, [uid]);
 
   // demo seeding for screenshots (?seedpicks=1): sample picks for finished weeks, marked backfilled
@@ -331,6 +334,8 @@ export default function Picks() {
                 const r = await probeFamilyKey(k);
                 if (r !== 'ok') return r;
                 await setSecret('lb_family', JSON.stringify(k)); setFamilyKey(k); setFk(k);
+                restoreFromServer({ season, curWeek, who: { uid, username: me.username, display: me.display_name }, load: () => loadPicks(uid, season), save: p => savePicks(uid, season, p), loadWeek: (s, w) => loadWeek(s, w) })
+                  .then(rr => { const m = restoreMessage(rr, true); if (m) flash(m); }).catch(() => {});
                 if (!lbMe) setSheet('join');
                 return 'ok';
               }}
@@ -358,7 +363,7 @@ export default function Picks() {
         onJoin={async (u) => {
           const m: LbMe = { uid: u.user_id, un: u.display_name || u.username, av: u.avatar || undefined, display: u.display_name, joinedAt: Date.now() };
           await saveLbMe(uid, m); setLbMe(m); setSheet(null);
-          const ws = [...new Set(Object.values(picksRef.current).map(p => p.week))];
+          const ws = weeksToShare(picksRef.current); // restored picks are already on the server
           for (const w of ws) await enqueue(snapshotFor(m, season, w, picksRef.current));
           flash(`Joined as ${m.un}. Sharing your picks…`);
         }} />
