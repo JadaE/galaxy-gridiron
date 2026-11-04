@@ -50,6 +50,8 @@ if [ -n "${GG_LEADERBOARD_PASSWORD:-}" ]; then
 elif [ "${LEAK_REQUIRE_PASSWORD:-1}" = 1 ]; then echo "leak-check: GG_LEADERBOARD_PASSWORD is not set; cannot check the password or its hash (LEAK_REQUIRE_PASSWORD=0 to skip)" >&2; exit 2
 fi
 while IFS=$'\t' read -r k v; do check "sleeper.$k" "$v"; done < <(jq -r '.sleeper // {} | paths(scalars) as $p | "\($p|join("."))\t\(getpath($p)|tostring)"' "$CFG")
+# fixed: the old personal application id must never come back
+check oldAppId "com.jada"
 n=$(find "$TMP/t" -iname 'config.local.json*' | wc -l); [ "$n" = 0 ] || { echo "LEAK: config.local.json is inside the build"; HITS=$((HITS+1)); }
 NF=$(find "$TMP/t" -type f | wc -l)
 if [ "$HITS" -gt 0 ]; then echo "$MODE LEAK CHECK FAILED ($HITS hit(s))" >&2; exit 1; fi

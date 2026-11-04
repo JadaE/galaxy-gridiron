@@ -9,10 +9,10 @@
     "backgroundColor": "#070B1C",
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.jada.galaxygridiron"
+      "bundleIdentifier": "com.jcaipps.galaxygridiron"
     },
     "android": {
-      "package": "com.jada.galaxygridiron",
+      "package": "com.jcaipps.galaxygridiron",
       "versionCode": 12,
       "adaptiveIcon": {
         "backgroundColor": "#030720",

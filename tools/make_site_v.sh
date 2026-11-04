@@ -34,7 +34,7 @@ H
 for f in $D/shots/*.png; do n=$(basename $f); echo "<a href=\"shots/$n\"><img loading=lazy src=\"shots/$n\" alt=\"$n\"></a>"; done
 cat <<H
 </div></div>
-<p class=small>Android 7+ · package com.jada.galaxygridiron · v$V · SHA-256 starts ${SHA} · built $(TZ=America/Chicago date '+%a %b %-d, %-I:%M %p CT')</p>
+<p class=small>Android 7+ · package com.jcaipps.galaxygridiron · v$V · SHA-256 starts ${SHA} · built $(TZ=America/Chicago date '+%a %b %-d, %-I:%M %p CT')</p>
 </main></body></html>
 H
 } > $D/index.html
