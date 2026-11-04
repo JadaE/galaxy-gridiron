@@ -1,20 +1,36 @@
-// Shared leaderboard store: here.now Site Data on the app's own download site, in a collection with an
-// unguessable name. Honor system, no logins, no keys in the app.
-//  * Anyone with the collection URL can read it, so hiding other people's picks until kickoff is done
+// Shared leaderboard store: here.now Site Data on the app's own download site.
+// v0.0.12: the collection names are derived on the device from the shared family password (picks/family.ts).
+// Without the password there is no shared leaderboard: picks stay on the phone. No keys or collection names in the app.
+//  * Anyone with the (derived) collection name can read it, so hiding other people's picks until kickoff is done
 //    in the app (client-side), not by the server.
-//  * The collection is insert-only for the public: records can't be edited or deleted by anyone but the
+//  * The live collection is insert-only for the public: records can't be edited or deleted by anyone but the
 //    site owner. Each write is a snapshot of one person's picks for one week.
 //  * Kickoff locks use the SERVER's createdAt timestamp: for each game we take that person's newest snapshot
 //    created before kickoff. Snapshots that arrive after kickoff don't change a pick (backfilled picks are
 //    flagged and only count when "Include backfilled" is on).
+//  * The archive collection (owner-insert only) holds the picks copied over from the old shared collection; each
+//    record carries its original server time in `oc`, which is trusted ONLY there because the public can't write it.
 import { saveSetting, loadSetting } from '../api';
-import { SITE_ORIGIN, PICKS_COLLECTION } from '../config';
+import { SITE_ORIGIN } from '../config';
 import { Game, Pick, PickMap } from './core';
+import { FamilyKey, validKey } from './family';
 
 export const SITE = SITE_ORIGIN;
-export const COLLECTION = PICKS_COLLECTION;
-const BASE = `${SITE}/.herenow/data/${COLLECTION}`;
 const APP = 'gg';
+let fam: FamilyKey | null = null;
+/** Set (or clear) the derived family collections. Clears the in-memory cache. */
+export function setFamilyKey(k: FamilyKey | null) { fam = validKey(k) ? k : null; memo = null; }
+export const hasFamilyKey = () => !!fam;
+const base = (c: string) => `${SITE}/.herenow/data/${c}`;
+
+/** Checks a derived key against the site: 200 = right password, 404 (collection not active) = wrong password. */
+export async function probeFamilyKey(k: FamilyKey, fetcher: typeof fetch = fetch): Promise<'ok' | 'wrong' | 'offline'> {
+  try {
+    const r = await fetcher(`${base(k.live)}?limit=1`, { method: 'GET', headers: { Accept: 'application/json' } });
+    if (r.ok) return 'ok';
+    return r.status === 404 || r.status === 403 ? 'wrong' : 'offline';
+  } catch { return 'offline'; }
+}
 
 export type Snap = { id: string; uid: string; un: string; av?: string; season: number; week: number; picks: Record<string, string>; bf: Record<string, number>; ts: number; createdAt: number };
 type Queued = { uid: string; un: string; av?: string; season: number; week: number; picks: Record<string, string>; bf: Record<string, number>; ts: number; key: string };
@@ -23,8 +39,9 @@ type Queued = { uid: string; un: string; av?: string; season: number; week: numb
 let kv = { get: loadSetting, set: saveSetting };
 export function setKv(get: (k: string) => Promise<string | null>, set: (k: string, v: string) => Promise<void>) { kv = { get, set }; }
 const ABBR = /^[A-Z]{2,3}$/;
-function clean(r: any): Snap | null {
-  const d = r?.data, at = Date.parse(r?.createdAt);
+function clean(r: any, archived = false): Snap | null {
+  const d = r?.data;
+  const at = archived && Number.isFinite(d?.oc) && d.oc > 0 ? Number(d.oc) : Date.parse(r?.createdAt);
   if (!d || !Number.isFinite(at) || d.app !== APP || typeof d.uid !== 'string' || !/^\d{1,24}$/.test(d.uid) || typeof d.un !== 'string' || d.un.startsWith('_')) return null;
   const picks: Record<string, string> = {}, bf: Record<string, number> = {};
   for (const [g, t] of Object.entries<any>(d.picks || {})) if (/^\d{4,12}$/.test(g) && typeof t === 'string' && ABBR.test(t)) picks[g] = t;
@@ -36,16 +53,19 @@ function clean(r: any): Snap | null {
 let memo: { at: number; season: number; snaps: Snap[] } | null = null;
 export async function fetchSnaps(season: number, force = false, fetcher: typeof fetch = fetch): Promise<{ snaps: Snap[]; stale: boolean }> {
   if (!force && memo && memo.season === season && Date.now() - memo.at < 90_000) return { snaps: memo.snaps, stale: false };
+  if (!fam) throw new Error('locked');
   try {
     const out: Snap[] = [];
-    let cursor: string | null = null, pages = 0;
-    do {
-      const r = await fetcher(`${BASE}?limit=100${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`, { method: 'GET', headers: { Accept: 'application/json' } });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const j: any = await r.json();
-      for (const x of j.records || []) { const s = clean(x); if (s && s.season === season) out.push(s); }
-      cursor = j.nextCursor || null;
-    } while (cursor && ++pages < 60);
+    for (const [coll, archived] of [[fam.live, false], [fam.archive, true]] as const) {
+      let cursor: string | null = null, pages = 0;
+      do {
+        const r = await fetcher(`${base(coll)}?limit=100${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`, { method: 'GET', headers: { Accept: 'application/json' } });
+        if (!r.ok) { if (archived && r.status === 404) break; throw new Error('HTTP ' + r.status); } // archive is optional
+        const j: any = await r.json();
+        for (const x of j.records || []) { const s = clean(x, archived); if (s && s.season === season) out.push(s); }
+        cursor = j.nextCursor || null;
+      } while (cursor && ++pages < 60);
+    }
     memo = { at: Date.now(), season, snaps: out };
     kv.set('lb:cache:' + season, JSON.stringify(out));
     return { snaps: out, stale: false };
@@ -73,7 +93,7 @@ export async function pendingCount() { return (await getQueue()).length; }
 let flushing = false;
 /** Send queued snapshots. Stops at the first network/rate-limit failure and keeps the rest for later. */
 export async function flush(fetcher: typeof fetch = fetch): Promise<{ sent: number; left: number; error?: string }> {
-  if (flushing) return { sent: 0, left: (await getQueue()).length };
+  if (flushing || !fam) return { sent: 0, left: (await getQueue()).length };
   flushing = true;
   let sent = 0, error: string | undefined;
   try {
@@ -82,7 +102,7 @@ export async function flush(fetcher: typeof fetch = fetch): Promise<{ sent: numb
       const s = q[0];
       let r: Response;
       try {
-        r = await fetcher(BASE, { method: 'POST', headers: { 'content-type': 'application/json', Origin: SITE, 'Idempotency-Key': s.key }, body: JSON.stringify({ uid: s.uid, un: s.un, av: s.av || undefined, season: s.season, week: s.week, picks: s.picks, bf: s.bf, ts: s.ts, app: APP }) });
+        r = await fetcher(base(fam.live), { method: 'POST', headers: { 'content-type': 'application/json', Origin: SITE, 'Idempotency-Key': s.key }, body: JSON.stringify({ uid: s.uid, un: s.un, av: s.av || undefined, season: s.season, week: s.week, picks: s.picks, bf: s.bf, ts: s.ts, app: APP }) });
       } catch (e: any) { error = 'offline'; break; }
       if (r.status === 429) { error = 'busy (rate limited), will retry'; break; }
       if (!r.ok && r.status >= 500) { error = 'server error ' + r.status; break; }

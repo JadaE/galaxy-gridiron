@@ -53,12 +53,12 @@ const PAGES: Record<InfoKey, { title: string; secs: Sec[] }> = {
   ] },
   picks: { title: 'Picks page', secs: [
     ['Record and chart', 'Your pick\'em record by week. The gold line is your season win %. Games are graded from ESPN\'s public final scores.'],
-    ['Leaderboard', "Honor system, by Sleeper username. Other players' picks stay hidden until that game kicks off."],
+    ['Leaderboard', "For friends and family: ask the app owner for the leaderboard password and enter it once. Picks are shared by Sleeper username. Other players' picks stay hidden until that game kicks off."],
   ] },
   picksboard: { title: 'How the leaderboard works', secs: [
     ['Grading', "Graded on each phone from ESPN's public scores. Ties and postponed games are no result."],
     ['Kickoff lock', 'A pick counts if it reached the shared board before kickoff (server timestamp). Changes after kickoff are ignored ("late").'],
-    ['Honor system', "The board is readable by anyone with the app's link, so hiding other picks until kickoff happens in the app, not on the server. No logins, no passwords."],
+    ['Password', "The password is turned into the leaderboard's address on your phone with a one-way code, and the password itself isn't saved. Anyone with the password can read the board, so hiding other picks until kickoff happens in the app, not on the server. No logins."],
     ['Your record', 'Your own record always comes from the picks on this phone.'],
     ['Picks by week', 'Newest week first. Swipe the grid sideways for older weeks; names stay put on the left. Gold = best record that week.'],
   ] },

@@ -1,12 +1,14 @@
-// "Update available" check. Reads version.json from the app's stable, unguessable update channel on here.now
-// (same site as the download pages; nothing secret here beyond the link itself). GET only.
+// "Update available" check. Reads version.json from the app's public update channel on here.now (same site as the
+// download pages; nothing secret). GET only.
 import { Platform, Linking } from 'react-native';
 import { VERSION_CODE } from './version';
 import { saveSetting, loadSetting, HOUR } from './api';
 import { isHostedPwa, PWA_BASE } from './web';
-import { SITE_ORIGIN, UPDATE_CHANNEL_PATH } from './config';
+import { SITE_ORIGIN, PUBLIC_UPDATE_PATH } from './config';
 
-export const UPDATE_URL = `${SITE_ORIGIN}/${UPDATE_CHANNEL_PATH}/version.json`;
+// v0.0.12 store version: the PUBLIC update channel (a plain, non-secret folder on the site). The private family channel
+// is no longer compiled in.
+export const UPDATE_URL = `${SITE_ORIGIN}/${PUBLIC_UPDATE_PATH}/version.json`;
 const SITE = `${SITE_ORIGIN}/`;
 export type UpdateInfo = { versionCode: number; versionName: string; apkUrl: string; notes: string };
 // web screenshots only: ?updurl=<local json> overrides the channel
