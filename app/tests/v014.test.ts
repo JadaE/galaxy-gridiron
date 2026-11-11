@@ -3,7 +3,7 @@
 // Mock names/IDs only. Run: npx tsx --require ./tests/rn-shim.cjs tests/v014.test.ts
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import { resolve, Snap } from '../src/picks/sync';
+import { fetchSnaps, resolve, setFamilyKey, setKv, Snap } from '../src/picks/sync';
 import { serverPicks } from '../src/picks/restore';
 import { Game, PickMap, seasonRecord, weekRecord } from '../src/picks/core';
 import { VERSION_CODE, VERSION_NAME } from '../src/version';
@@ -55,6 +55,42 @@ const onlyLive = (p: PickMap) => Object.fromEntries(Object.entries(p).filter(([,
   await t('restore after a reinstall brings late-shared picks back as backfilled', () => {
     const r = serverPicks([late], { uid: A.uid, username: A.un }, games);
     assert.equal(Object.keys(r).length, wk.length); assert.ok(Object.values(r).every(x => x.src === 'backfill'));
+  });
+  // JC-17: one-time owner correction (tools/leaderboard.py fix-late-week) = an owner-only ARCHIVE record whose `oc`
+  // is 1 minute before the earliest corrected kickoff, holding the week's picks minus games the owner ruled late.
+  const firstKick = Math.min(...wk.map(g => g.kickoff));
+  const lateG = wk.reduce((a, g) => (g.kickoff < a.kickoff ? g : a)); // the earliest game stays late in this mock
+  const restKick = Math.min(...wk.filter(g => g.id !== lateG.id).map(g => g.kickoff));
+  const fixPicks = Object.fromEntries(Object.entries(allHome).filter(([id]) => id !== lateG.id));
+  const fix = snap(A, { id: 'fix', picks: fixPicks, createdAt: restKick - 60e3 });
+  await t('JC-17: owner archive fix counts those picks on time, no ✱, no double count with the late live copy', () => {
+    const p = resolve([late, fix], games)[0];
+    assert.equal(Object.keys(p.picks).length, wk.length);
+    for (const g of wk) assert.equal(p.picks[g.id].src, g.id === lateG.id ? 'backfill' : 'live', g.id);
+    assert.equal(p.late, 0);
+    const r = weekRecord(wk, p.picks), on = weekRecord(wk, onlyLive(p.picks));
+    assert.equal(r.backfilled, 1); assert.equal(on.w + on.l + on.pending + on.nr, wk.length - 1);
+  });
+  await t('JC-17: a game the owner ruled late stays ✱ backfilled; other people and other weeks are unchanged', () => {
+    const g = wk[0];
+    const other = snap(B, { picks: { [g.id]: g.away.abbr }, createdAt: g.kickoff - 10 });
+    const w5 = snap(A, { week: 5, picks: { [byWeek[5][0].id]: byWeek[5][0].home.abbr }, createdAt: byWeek[5][0].kickoff - 10 });
+    const before = resolve([late, other, w5], games), after = resolve([late, other, w5, fix], games);
+    assert.deepEqual(after.find(x => x.uid === B.uid), before.find(x => x.uid === B.uid));
+    const a = after.find(x => x.uid === A.uid)!;
+    assert.equal(a.picks[lateG.id].src, 'backfill');
+    assert.deepEqual(a.picks[byWeek[5][0].id], before.find(x => x.uid === A.uid)!.picks[byWeek[5][0].id]);
+  });
+  await t('JC-17: `oc` is trusted only from the owner archive, never from the public live collection', async () => {
+    const mem: Record<string, string> = {}; setKv(async k => mem[k] ?? null, async (k, v) => { mem[k] = v; });
+    const K = { live: 'gg' + '1'.repeat(40), archive: 'gg' + '1'.repeat(40) + '_a' }; setFamilyKey(K);
+    const rec = (id: string, oc?: number) => ({ id, createdAt: new Date(lastKick + 86400e3).toISOString(), data: { uid: A.uid, un: A.un, season: 2026, week: W, picks: fixPicks, bf: {}, ts: 0, app: 'gg', ...(oc ? { oc } : {}) } });
+    const f = (liveRecs: any[], archRecs: any[]) => (async (u: string) => ({ ok: true, status: 200, json: async () => ({ records: u.includes('_a') ? archRecs : liveRecs }) })) as any;
+    const spoof = (await fetchSnaps(2026, true, f([rec('l1', restKick - 60e3)], []))).snaps;
+    assert.ok(Object.values(resolve(spoof, games)[0].picks).every(x => x.src === 'backfill'));
+    const owned = (await fetchSnaps(2026, true, f([rec('l1')], [rec('a1', restKick - 60e3)]))).snaps;
+    assert.ok(Object.values(resolve(owned, games)[0].picks).every(x => x.src === 'live'));
+    setFamilyKey(null);
   });
   await t('version is 0.0.14 (14)', () => { assert.equal(VERSION_CODE, 14); assert.equal(VERSION_NAME, '0.0.14'); });
   console.log(`\n${pass} passed, ${fail} failed`);
