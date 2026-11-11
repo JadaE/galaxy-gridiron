@@ -32,3 +32,5 @@ research/
 RELEASE_NOTES.md
 tools/updtest/
 app/tests/_try*.ts
+# private data backups (JC-17): never commit
+backups/

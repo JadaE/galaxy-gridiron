@@ -13,14 +13,18 @@ The password comes ONLY from $GG_LEADERBOARD_PASSWORD.
   python3 tools/leaderboard.py migrate [--dry-run]  # copy every OLD picks record into the archive with the owner API
                                                     # (idempotent: skips records already copied). Needs the new manifest LIVE.
   python3 tools/leaderboard.py status               # record counts: old / archive / live (owner API)
-  python3 tools/leaderboard.py backup DIR           # owner read of old / archive / live into DIR (files chmod 600). Read-only.
-  python3 tools/leaderboard.py fix-late-week --uid UID --week W [--season S] [--late-games ID,ID] [--from-backup DIR]
-                                                    [--games FILE] [--out FILE] [--apply | --rollback]
-      One-time, OWNER-APPROVED correction for ONE user and ONE week whose picks were made on time in the app (live mode,
-      no backfill flags) but reached the server after kickoff. Dry run by default. --apply inserts ONE owner-only archive
-      record (src "fix-<live record id>") holding that week's picks minus --late-games, with `oc` = 1 minute before the
-      earliest kickoff among them. Idempotent (an existing record with that src = nothing to do). --rollback deletes it.
-      Nothing else is read-modified: the late live record stays as it is; no app rule trusts phone clocks.
+  python3 tools/leaderboard.py backup [DIR]         # owner read of old / archive / live into DIR (default /workspace/gg-private-backups/jc17,
+                                                    # outside the repo; folder 700, files 600). Read-only on the server.
+                                                    # CLEANUP: delete the JC-17 backups once JC-17 is closed (they hold everyone's picks).
+  python3 tools/leaderboard.py fix-late-week --source-id REC_ID [--from-backup DIR] [--games FILE] [--out FILE]
+                                                    [--apply] | [--rollback [--apply]]
+      JC-17 ONLY: one-time, OWNER-APPROVED correction. PINNED to season 2026, week 9 and one user whose id is read from
+      $GG_JC17_UID or app/config.local.json "jc17Uid" (gitignored) and must match the hash below; any other value is refused.
+      --source-id must equal the one live record found for that user+week (the owner confirms it from the dry run).
+      Dry run by default (prints the record id, every pick, kickoffs and oc). --apply inserts ONE owner-only archive record
+      (src "fix-<source id>") with that week's picks, `oc` = 1 minute before the earliest corrected kickoff. Idempotent.
+      --rollback plans the removal of exactly that record (exact src + season + user + week, exactly one match);
+      --rollback --apply deletes it. The late live record is never changed; no app rule trusts phone clocks.
 Needs: app/config.local.json (siteSlug, picksCollection, publishSiteDir) and $HERENOW_API_KEY for migrate/status/backup/fix-late-week\n(fix-late-week dry run with --from-backup and --games needs no key).
 """
 import hashlib, json, os, sys, time, glob, urllib.request, urllib.error
@@ -125,19 +129,42 @@ def ms(iso):
     return int(datetime.fromisoformat(iso.replace('Z', '+00:00')).timestamp() * 1000)
 
 
+BACKUP_DIR = '/workspace/gg-private-backups/jc17'
+
+
 def cmd_backup(d):
-    f = family(); os.makedirs(d, mode=0o700, exist_ok=True); stamp = time.strftime('%Y%m%d-%H%M')
+    f = family(); d = os.path.abspath(d or BACKUP_DIR)
+    if d == ROOT or d.startswith(ROOT + os.sep): sys.exit('backups must go outside the repo')
+    os.makedirs(d, mode=0o700, exist_ok=True); os.chmod(d, 0o700); stamp = time.strftime('%Y%m%d-%H%M')
     for label, c in (('old', CFG['picksCollection']), ('archive', f['archive']), ('live', f['live'])):
         r = list_all(c) or []
         p = os.path.join(d, f'picks-{label}-{stamp}.json')
         with open(os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fh: json.dump(r, fh)
         os.chmod(p, 0o600); print(f'{label}: {len(r)} records -> picks-{label}-{stamp}.json (600)')
+    print('cleanup: delete this folder once JC-17 is closed')
 
 
-def espn_kickoffs(season, week):
-    u = f'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?week={week}&seasontype=2&dates={season}'
+def espn_week(season, week):
+    """{gameId: {'k': kickoff ms, 'away': abbr, 'home': abbr}} from ESPN's public scoreboard."""
+    u = f'https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard?week={int(week)}&seasontype=2&dates={int(season)}'
     with urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': 'gg-tools'})) as r: j = json.load(r)
-    return {str(e['id']): ms(e['date']) for e in j.get('events', [])}
+    out = {}
+    for e in j.get('events', []):
+        t = {c['homeAway']: c['team']['abbreviation'] for c in e['competitions'][0]['competitors']}
+        out[str(e['id'])] = {'k': ms(e['date']), 'away': t.get('away', '?'), 'home': t.get('home', '?')}
+    return out
+
+
+# ---- JC-17 pin: season 2026, week 9, one user (id kept out of the public repo; only a salted hash is here) ----
+JC17_SEASON, JC17_WEEK, JC17_LATE = 2026, 9, ('401873037',)  # 401873037 = the Thursday game (ruled late; not picked)
+JC17_UID_SHA = 'fa9bd8f6591e2b69a9c1e0e8cf7525427bc0b257ab7be6f27d7c39983a085cdf'
+jc17_hash = lambda uid: hashlib.sha256(('gg-jc17\n' + str(uid)).encode()).hexdigest()
+
+
+def jc17_uid():
+    uid = os.environ.get('GG_JC17_UID') or CFG.get('jc17Uid') or ''
+    if not uid or jc17_hash(uid) != JC17_UID_SHA: sys.exit('STOP: the JC-17 user id ($GG_JC17_UID or config "jc17Uid") is missing or not the pinned one')
+    return uid
 
 
 def plan_fix(live, arch, kick, uid, season, week, late_games=()):
@@ -176,39 +203,55 @@ def _latest(d, label):
     return json.load(open(fs[-1]))
 
 
+def plan_rollback(arch, uid, season, week, source_id):
+    tag = 'fix-' + source_id
+    m = [x for x in arch if x.get('data', {}).get('src') == tag and x['data'].get('uid') == uid and x['data'].get('season') == season and x['data'].get('week') == week]
+    if len(m) != 1: return {'ok': False, 'why': f'expected exactly 1 archive record with src {tag} for this user+season+week, found {len(m)}'}
+    return {'ok': True, 'id': m[0]['id'], 'tag': tag}
+
+
 def cmd_fix_late_week(a):
-    uid, week = _arg(a, '--uid'), _arg(a, '--week')
-    if not uid or not week: sys.exit('need --uid and --week')
-    week, season = int(week), int(_arg(a, '--season', '2026'))
-    late_games = [x for x in (_arg(a, '--late-games', '') or '').split(',') if x]
+    for k in ('--uid', '--week', '--season', '--late-games'):
+        if k in a: sys.exit(f'STOP: {k} is not accepted; this tool is pinned to JC-17 (season {JC17_SEASON}, week {JC17_WEEK})')
+    src_id = _arg(a, '--source-id')
+    if not src_id or not src_id.startswith('rec_'): sys.exit('need --source-id rec_... (the live record id shown by the dry run)')
+    uid, season, week, late_games = jc17_uid(), JC17_SEASON, JC17_WEEK, list(JC17_LATE)
     apply_, rollback, bdir = '--apply' in a, '--rollback' in a, _arg(a, '--from-backup')
     if (apply_ or rollback) and bdir: sys.exit('--apply/--rollback read the live server, not a backup')
-    kick = {str(k): int(v) for k, v in json.load(open(_arg(a, '--games'))).items()} if _arg(a, '--games') else espn_kickoffs(season, week)
+    if _arg(a, '--games'):
+        g = json.load(open(_arg(a, '--games')))
+        sched = {str(k): (v if isinstance(v, dict) else {'k': int(v), 'away': '?', 'home': '?'}) for k, v in g.items()}
+    else: sched = espn_week(season, week)
+    kick = {k: v['k'] for k, v in sched.items()}
     if bdir: live, arch, where = _latest(bdir, 'live'), _latest(bdir, 'archive'), 'backup'
     else:
-        f = family(); live, arch, where = list_all(f['live']), list_all(f['archive']), 'server'
+        f = family(); live, arch, where = list_all(f['live']), list_all(f['archive']), 'server (read-only)'
         if live is None or arch is None: sys.exit('live/archive collection not active')
-    if rollback:
-        tag_ids = [x['id'] for x in arch if str(x.get('data', {}).get('src', '')).startswith('fix-') and x['data'].get('uid') == uid and x['data'].get('week') == week]
-        print(f'rollback: {len(tag_ids)} fix record(s) for this user+week: {tag_ids}')
-        for i in tag_ids:
-            st, j = owner('DELETE', f"{family()['archive']}/{i}")
-            print(f'  delete {i}: HTTP {st}')
-        return
-    p = plan_fix(live, arch, kick, uid, season, week, late_games)
-    hhmm = lambda t: datetime.fromtimestamp(t / 1000).strftime('%a %b %d %I:%M %p')
     print(f'read from {where}: live {len(live)} records, archive {len(arch)} records')
+    if rollback:
+        r = plan_rollback(arch, uid, season, week, src_id)
+        if not r['ok']: sys.exit('STOP: ' + r['why'])
+        print(f"rollback plan: delete archive record {r['id']} (src {r['tag']}, season {season}, week {week})")
+        if not apply_: print('DRY RUN: nothing deleted. Add --apply to delete exactly that record.'); return
+        st, j = owner('DELETE', f"{family()['archive']}/{r['id']}")
+        if st not in (200, 204): sys.exit(f'delete failed: HTTP {st} {j.get("code", "")}')
+        print(f"deleted 1 archive record {r['id']}"); return
+    p = plan_fix(live, arch, kick, uid, season, week, late_games)
+    ct = lambda t: datetime.fromtimestamp(t / 1000).strftime('%a %b %d %I:%M %p CT')
     if not p['ok']: sys.exit('STOP: ' + p['why'])
+    if p['source'] != src_id: sys.exit(f"STOP: --source-id does not match the live record for this user+week ({p['source']})")
     if p.get('noop'): print(f"nothing to do: {p['why']} (source {p['source']})"); return
-    print(f"source live record: {p['source']} (server time {hhmm(p['source_created'])}, {len(p['record']['picks']) + len(p['late']) + len(p['already_on_time'])} picks)")
-    print(f"  -> on time (into archive record): {len(p['fix'])}   kept late (stay backfilled): {len(p['late'])} {p['late']}   already on time: {len(p['already_on_time'])}")
-    if p['not_picked_late']: print(f"  late games with no pick in the record (nothing to mark): {p['not_picked_late']}")
-    print(f"  archive record: src={p['record']['src']} oc={hhmm(p['record']['oc'])} (1 min before the earliest corrected kickoff)")
+    rec = p['record']
+    print(f"season {season} week {week}; source live record: {p['source']} (server time {ct(p['source_created'])}; phone last-edit time {ct(rec['ts'])})")
+    print(f"  on time (into archive record): {len(p['fix'])}   kept late: {len(p['late'])} {p['late']}   already on time: {len(p['already_on_time'])}")
+    if p['not_picked_late']: print(f"  ruled-late games with no pick (nothing to mark): {p['not_picked_late']}")
+    for gid in sorted(rec['picks'], key=lambda x: (kick[x], x)):
+        s_ = sched[gid]; print(f"    {gid}  {s_['away']:>3} @ {s_['home']:<3}  picked {rec['picks'][gid]:<3}  kickoff {ct(kick[gid])}")
+    print(f"  archive record: src={rec['src']}  oc={ct(rec['oc'])} (1 min before the earliest corrected kickoff {ct(min(kick[g] for g in p['fix']))})")
     if _arg(a, '--out'):
-        o = _arg(a, '--out')
-        with open(os.open(o, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fh: json.dump(p['record'], fh)
+        with open(os.open(_arg(a, '--out'), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fh: json.dump(rec, fh)
     if not apply_: print('DRY RUN: nothing written. Add --apply to insert the 1 archive record.'); return
-    st, j = owner('POST', family()['archive'], p['record'], key=p['record']['src'])
+    st, j = owner('POST', family()['archive'], rec, key=rec['src'])
     if st not in (200, 201): sys.exit(f'insert failed: HTTP {st} {j.get("code", "")}')
     print(f"inserted 1 archive record {j.get('id', j.get('record', {}).get('id', '?'))}; re-run without --apply to confirm 'already applied'")
 
@@ -216,4 +259,4 @@ def cmd_fix_late_week(a):
 if __name__ == '__main__':
     a = sys.argv[1:] or ['help']; dry = '--dry-run' in a
     {'manifest': lambda: cmd_manifest(dry), 'migrate': lambda: cmd_migrate(dry), 'status': cmd_status, 'keys': cmd_keys,
-     'backup': lambda: cmd_backup(a[1] if len(a) > 1 else sys.exit('need DIR')), 'fix-late-week': lambda: cmd_fix_late_week(a)}.get(a[0], lambda: print(__doc__))()
+     'backup': lambda: cmd_backup(a[1] if len(a) > 1 else None), 'fix-late-week': lambda: cmd_fix_late_week(a)}.get(a[0], lambda: print(__doc__))()

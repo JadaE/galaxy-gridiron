@@ -28,4 +28,24 @@ check('refuses when the archive already has that user+week', not L.plan_fix(live
 pm = L.plan_fix(live, [], kick, U, 2026, 9, ['9004'])
 check('a late-ruled later game (Monday) is simply left out and stays late', sorted(pm['record']['picks']) == ['9001', '9002', '9003'] and pm['late'] == ['9004'])
 check('no-op for another user with nothing late', L.plan_fix(live, [], kick, V, 2026, 9).get('noop'))
+# rollback: exact tag + season + user + week, exactly one match
+fixrec = {'id': 'arec1', 'data': p['record']}
+check('rollback finds exactly the fix record', L.plan_rollback([fixrec], U, 2026, 9, 'rec_late') == {'ok': True, 'id': 'arec1', 'tag': 'fix-rec_late'})
+check('rollback ignores other fix- tags', not L.plan_rollback([dict(fixrec, data=dict(p['record'], src='fix-rec_other'))], U, 2026, 9, 'rec_late')['ok'])
+check('rollback checks the season', not L.plan_rollback([fixrec], U, 2025, 9, 'rec_late')['ok'])
+check('rollback refuses two matches', not L.plan_rollback([fixrec, dict(fixrec, id='arec2')], U, 2026, 9, 'rec_late')['ok'])
+check('rollback refuses zero matches', not L.plan_rollback([], U, 2026, 9, 'rec_late')['ok'])
+# pinning: free targeting is refused, and a non-pinned user id is refused
+def exits(f):
+    try: f()
+    except SystemExit as e: return str(e)
+    return ''
+for k in ('--uid', '--week', '--season', '--late-games'):
+    check(f'refuses {k}', 'not accepted' in exits(lambda: L.cmd_fix_late_week(['fix-late-week', '--source-id', 'rec_x', k, '1'])))
+check('refuses a missing --source-id', 'source-id' in exits(lambda: L.cmd_fix_late_week(['fix-late-week'])))
+os.environ['GG_JC17_UID'] = U; L.CFG.pop('jc17Uid', None)
+check('refuses a user id that is not the pinned JC-17 user', 'not the pinned one' in exits(lambda: L.cmd_fix_late_week(['fix-late-week', '--source-id', 'rec_x'])))
+check('pin is season 2026, week 9, Thursday ruled late', (L.JC17_SEASON, L.JC17_WEEK, L.JC17_LATE) == (2026, 9, ('401873037',)))
+check('backups refuse a folder inside the repo', 'outside the repo' in exits(lambda: (setattr(L, 'family', lambda: {}), L.cmd_backup(os.path.join(L.ROOT, 'backups')))))
+check('default backup folder is outside the repo and outside the app workspace', not L.BACKUP_DIR.startswith(L.ROOT) and '/fantasy-football' not in L.BACKUP_DIR)
 print(f'{ok} passed, 0 failed')
