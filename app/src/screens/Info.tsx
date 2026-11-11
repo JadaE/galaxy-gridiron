@@ -57,7 +57,7 @@ const PAGES: Record<InfoKey, { title: string; secs: Sec[] }> = {
   ] },
   picksboard: { title: 'How the leaderboard works', secs: [
     ['Grading', "Graded on each phone from ESPN's public scores. Ties and postponed games are no result."],
-    ['Kickoff lock', 'A pick counts if it reached the shared board before kickoff (server timestamp). Changes after kickoff are ignored ("late").'],
+    ['Kickoff lock', 'A pick counts if it reached the shared board before kickoff (server timestamp). Changes after kickoff are ignored ("late"). Picks that only reached the board after kickoff show as ✱ backfilled.'],
     ['Password', "The password is turned into the leaderboard's address on your phone with a one-way code, and the password itself isn't saved. Anyone with the password can read the board, so hiding other picks until kickoff happens in the app, not on the server. No logins."],
     ['Your record', 'Your own record always comes from the picks on this phone.'],
     ['Picks by week', 'Newest week first. Swipe the grid sideways for older weeks; names stay put on the left. Gold = best record that week.'],

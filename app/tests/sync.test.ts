@@ -23,9 +23,9 @@ setKv(async k => mem[k] ?? null, async (k, v) => { mem[k] = v; });
     ], games)[0];
     assert.equal(p.picks[g6.id].team, g6.away.abbr); assert.equal(p.late, 1);
   });
-  await t('a pick that only arrives after kickoff does not count', () => {
+  await t('a pick that only arrives after kickoff counts as backfilled, not on time (v0.0.14)', () => {
     const p = resolve([snap({ picks: { [g6.id]: g6.home.abbr }, createdAt: g6.kickoff + 1 })], games)[0];
-    assert.equal(p.picks[g6.id], undefined); assert.equal(p.late, 1);
+    assert.equal(p.picks[g6.id].src, 'backfill'); assert.equal(p.late, 0);
   });
   await t('backfilled entries are kept but tagged, and never override an on-time pick', () => {
     const p = resolve([

@@ -6,8 +6,8 @@
 //  * The live collection is insert-only for the public: records can't be edited or deleted by anyone but the
 //    site owner. Each write is a snapshot of one person's picks for one week.
 //  * Kickoff locks use the SERVER's createdAt timestamp: for each game we take that person's newest snapshot
-//    created before kickoff. Snapshots that arrive after kickoff don't change a pick (backfilled picks are
-//    flagged and only count when "Include backfilled" is on).
+//    created before kickoff. Snapshots that arrive after kickoff don't change an on-time pick; picks that only
+//    arrive after kickoff are tagged ✱ backfilled and only count when "Include backfilled" is on.
 //  * The archive collection (owner-insert only) holds the picks copied over from the old shared collection; each
 //    record carries its original server time in `oc`, which is trusted ONLY there because the public can't write it.
 import { saveSetting, loadSetting } from '../api';
@@ -118,8 +118,8 @@ export async function flush(fetcher: typeof fetch = fetch): Promise<{ sent: numb
 
 // ---- resolving picks per person ----
 export type Person = { uid: string; un: string; av?: string; picks: PickMap; late: number; sample?: boolean };
-/** For each person and game: newest snapshot created before kickoff wins. Backfilled entries (made after the
- * game) come from the newest snapshot that has them flagged and are tagged src 'backfill'. */
+/** For each person and game: newest snapshot created before kickoff wins. With no on-time pick, the newest pick
+ * that arrived after kickoff (flagged backfill or not) is tagged src 'backfill'. */
 export function resolve(snaps: Snap[], games: Record<string, Game>): Person[] {
   const byUser: Record<string, Snap[]> = {}, wk: Record<number, Game[]> = {};
   for (const s of snaps) (byUser[s.uid] = byUser[s.uid] || []).push(s);
@@ -138,8 +138,11 @@ export function resolve(snaps: Snap[], games: Record<string, Game>): Person[] {
         continue;
       }
       if (!team) continue;
-      if (s.bf[g.id]) { if (picks[g.id]?.src !== 'live') picks[g.id] = { team, week: g.week, at: s.createdAt, src: 'backfill' }; continue; }
-      if (picks[g.id]?.team !== team) lateSeen.add(g.id);
+      // after kickoff: an on-time pick never changes (a different team only counts as "late"). With no on-time pick,
+      // the late pick counts as ✱ backfilled, whether it was flagged or just saved on the phone and shared late
+      // (v0.0.14 hotfix: before, unflagged late picks vanished from the board and the record entirely).
+      if (picks[g.id]?.src === 'live') { if (picks[g.id].team !== team) lateSeen.add(g.id); continue; }
+      picks[g.id] = { team, week: g.week, at: s.createdAt, src: 'backfill' };
     }
     return { uid, un: last.un, av: last.av, picks, late: lateSeen.size };
   });

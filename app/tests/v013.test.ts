@@ -88,7 +88,7 @@ const deps = (local: { p: PickMap }, fetcher: any, who = ME) => ({ season: 2026,
     assert.deepEqual(weeksToShare(p), [6]);
     assert.deepEqual(weeksToShare(mergeRestored({}, { a: { team: 'CHI', week: 5, at: 1, src: 'live' } }).picks), []);
   });
-  await t('version is 13', () => assert.equal(VERSION_CODE, 13));
+  await t('version is 13 or later', () => assert.ok(VERSION_CODE >= 13));
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);
 })();
