@@ -1,35 +1,45 @@
-// Shared leaderboard store: here.now Site Data on the app's own download site.
-// v0.0.12: the collection names are derived on the device from the shared family password (picks/family.ts).
-// Without the password there is no shared leaderboard: picks stay on the phone. No keys or collection names in the app.
-//  * Anyone with the (derived) collection name can read it, so hiding other people's picks until kickoff is done
-//    in the app (client-side), not by the server.
-//  * The live collection is insert-only for the public: records can't be edited or deleted by anyone but the
-//    site owner. Each write is a snapshot of one person's picks for one week.
+// Shared leaderboard store: here.now Site Data on the app's own download site, reached ONLY through the AI Worker
+// (JC-34, v0.0.15). The Worker checks the family password (rate-limited + lockout), hands out an `lb_` token, binds it to
+// one Sleeper user id, writes snapshots as that user only, and hides other people's picks until each game's kickoff.
+//  * Records are insert-only snapshots of one person's picks for one week.
 //  * Kickoff locks use the SERVER's createdAt timestamp: for each game we take that person's newest snapshot
 //    created before kickoff. Snapshots that arrive after kickoff don't change an on-time pick; picks that only
 //    arrive after kickoff are tagged ✱ backfilled and only count when "Include backfilled" is on.
-//  * The archive collection (owner-insert only) holds the picks copied over from the old shared collection; each
-//    record carries its original server time in `oc`, which is trusted ONLY there because the public can't write it.
+//  * Archive records (picks copied from the old shared collection) come back with their original server time.
 import { saveSetting, loadSetting } from '../api';
-import { SITE_ORIGIN } from '../config';
+import { SITE_ORIGIN, LEADERBOARD_API } from '../config';
 import { Game, Pick, PickMap } from './core';
-import { FamilyKey, validKey } from './family';
+import { validToken } from './family';
 
 export const SITE = SITE_ORIGIN;
 const APP = 'gg';
-let fam: FamilyKey | null = null;
-/** Set (or clear) the derived family collections. Clears the in-memory cache. */
-export function setFamilyKey(k: FamilyKey | null) { fam = validKey(k) ? k : null; memo = null; }
-export const hasFamilyKey = () => !!fam;
-const base = (c: string) => `${SITE}/.herenow/data/${c}`;
+let tok: string | null = null, joinedAs: string | null = null;
+let api = LEADERBOARD_API;
+/** tests only */
+export function setLbApi(u: string) { api = u; }
+/** Set (or clear) the leaderboard token. Clears the in-memory cache. */
+export function setLbToken(t: string | null) { tok = validToken(t) ? t : null; joinedAs = null; memo = null; }
+export const hasLbToken = () => !!tok;
+export const lbConfigured = () => /^https:\/\/[^/]+$/.test(api) || /^http:\/\/localhost(:\d+)?$/.test(api);
+const auth = () => ({ Accept: 'application/json', Authorization: 'Bearer ' + tok });
 
-/** Checks a derived key against the site: 200 = right password, 404 (collection not active) = wrong password. */
-export async function probeFamilyKey(k: FamilyKey, fetcher: typeof fetch = fetch): Promise<'ok' | 'wrong' | 'offline'> {
+export type Unlock = { status: 'ok'; token: string } | { status: 'wrong' | 'locked' | 'offline' | 'not_setup' };
+/** One server-side password check. The server limits tries (per phone network and for everyone) and locks out. */
+export async function unlockLeaderboard(password: string, fetcher: typeof fetch = fetch): Promise<Unlock> {
+  if (!lbConfigured()) return { status: 'not_setup' };
   try {
-    const r = await fetcher(`${base(k.live)}?limit=1`, { method: 'GET', headers: { Accept: 'application/json' } });
-    if (r.ok) return 'ok';
-    return r.status === 404 || r.status === 403 ? 'wrong' : 'offline';
-  } catch { return 'offline'; }
+    const r = await fetcher(`${api}/lb/unlock`, { method: 'POST', headers: { 'content-type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ password: password.trim() }) });
+    if (r.ok) { const j: any = await r.json(); return validToken(j?.token) ? { status: 'ok', token: j.token } : { status: 'offline' }; }
+    return r.status === 403 ? { status: 'wrong' } : r.status === 429 ? { status: 'locked' } : r.status === 503 ? { status: 'not_setup' } : { status: 'offline' };
+  } catch { return { status: 'offline' }; }
+}
+/** Bind this phone's token to her Sleeper user id (once; the server refuses a different id later). */
+export async function joinLeaderboard(me: { uid: string; un: string }, fetcher: typeof fetch = fetch): Promise<boolean> {
+  if (!tok) return false;
+  if (joinedAs === me.uid) return true;
+  const r = await fetcher(`${api}/lb/join`, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json' }, body: JSON.stringify({ uid: me.uid, un: me.un }) });
+  if (r.ok) joinedAs = me.uid;
+  return r.ok;
 }
 
 export type Snap = { id: string; uid: string; un: string; av?: string; season: number; week: number; picks: Record<string, string>; bf: Record<string, number>; ts: number; createdAt: number };
@@ -39,33 +49,28 @@ type Queued = { uid: string; un: string; av?: string; season: number; week: numb
 let kv = { get: loadSetting, set: saveSetting };
 export function setKv(get: (k: string) => Promise<string | null>, set: (k: string, v: string) => Promise<void>) { kv = { get, set }; }
 const ABBR = /^[A-Z]{2,3}$/;
-function clean(r: any, archived = false): Snap | null {
-  const d = r?.data;
-  const at = archived && Number.isFinite(d?.oc) && d.oc > 0 ? Number(d.oc) : Date.parse(r?.createdAt);
-  if (!d || !Number.isFinite(at) || d.app !== APP || typeof d.uid !== 'string' || !/^\d{1,24}$/.test(d.uid) || typeof d.un !== 'string' || d.un.startsWith('_')) return null;
+/** Records from GET /lb/snaps are already cleaned by the Worker; checked again here (never trust the wire). */
+function clean(d: any): Snap | null {
+  const at = Number(d?.createdAt);
+  if (!d || !Number.isFinite(at) || typeof d.uid !== 'string' || !/^\d{1,24}$/.test(d.uid) || typeof d.un !== 'string' || d.un.startsWith('_')) return null;
   const picks: Record<string, string> = {}, bf: Record<string, number> = {};
   for (const [g, t] of Object.entries<any>(d.picks || {})) if (/^\d{4,12}$/.test(g) && typeof t === 'string' && ABBR.test(t)) picks[g] = t;
   for (const g of Object.keys(d.bf || {})) if (picks[g]) bf[g] = 1;
-  return { id: String(r.id), uid: d.uid, un: d.un.slice(0, 40), av: typeof d.av === 'string' && /^[a-z0-9]{1,64}$/i.test(d.av) ? d.av : undefined, season: Number(d.season), week: Number(d.week), picks, bf, ts: Number(d.ts) || 0, createdAt: at };
+  return { id: String(d.id), uid: d.uid, un: d.un.slice(0, 40), av: typeof d.av === 'string' && /^[a-z0-9]{1,64}$/i.test(d.av) ? d.av : undefined, season: Number(d.season), week: Number(d.week), picks, bf, ts: Number(d.ts) || 0, createdAt: at };
 }
 
 /** Read every snapshot for the season (paged). Cached ~90 s; offline falls back to the last copy. */
 let memo: { at: number; season: number; snaps: Snap[] } | null = null;
 export async function fetchSnaps(season: number, force = false, fetcher: typeof fetch = fetch): Promise<{ snaps: Snap[]; stale: boolean }> {
   if (!force && memo && memo.season === season && Date.now() - memo.at < 90_000) return { snaps: memo.snaps, stale: false };
-  if (!fam) throw new Error('locked');
+  if (!tok) throw new Error('locked');
   try {
     const out: Snap[] = [];
-    for (const [coll, archived] of [[fam.live, false], [fam.archive, true]] as const) {
-      let cursor: string | null = null, pages = 0;
-      do {
-        const r = await fetcher(`${base(coll)}?limit=100${cursor ? '&cursor=' + encodeURIComponent(cursor) : ''}`, { method: 'GET', headers: { Accept: 'application/json' } });
-        if (!r.ok) { if (archived && r.status === 404) break; throw new Error('HTTP ' + r.status); } // archive is optional
-        const j: any = await r.json();
-        for (const x of j.records || []) { const s = clean(x, archived); if (s && s.season === season) out.push(s); }
-        cursor = j.nextCursor || null;
-      } while (cursor && ++pages < 60);
-    }
+    const r = await fetcher(`${api}/lb/snaps?season=${encodeURIComponent(String(season))}`, { method: 'GET', headers: auth() });
+    if (r.status === 401) { tok = null; throw new Error('locked'); }
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j: any = await r.json();
+    for (const x of j.records || []) { const s = clean(x); if (s && s.season === season) out.push(s); }
     memo = { at: Date.now(), season, snaps: out };
     kv.set('lb:cache:' + season, JSON.stringify(out));
     return { snaps: out, stale: false };
@@ -93,7 +98,7 @@ export async function pendingCount() { return (await getQueue()).length; }
 let flushing = false;
 /** Send queued snapshots. Stops at the first network/rate-limit failure and keeps the rest for later. */
 export async function flush(fetcher: typeof fetch = fetch): Promise<{ sent: number; left: number; error?: string }> {
-  if (flushing || !fam) return { sent: 0, left: (await getQueue()).length };
+  if (flushing || !tok) return { sent: 0, left: (await getQueue()).length };
   flushing = true;
   let sent = 0, error: string | undefined;
   try {
@@ -102,7 +107,8 @@ export async function flush(fetcher: typeof fetch = fetch): Promise<{ sent: numb
       const s = q[0];
       let r: Response;
       try {
-        r = await fetcher(base(fam.live), { method: 'POST', headers: { 'content-type': 'application/json', Origin: SITE, 'Idempotency-Key': s.key }, body: JSON.stringify({ uid: s.uid, un: s.un, av: s.av || undefined, season: s.season, week: s.week, picks: s.picks, bf: s.bf, ts: s.ts, app: APP }) });
+        if (!(await joinLeaderboard({ uid: s.uid, un: s.un }, fetcher))) { error = 'not linked to this Sleeper account'; break; }
+        r = await fetcher(`${api}/lb/snap`, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json', 'Idempotency-Key': s.key }, body: JSON.stringify({ uid: s.uid, un: s.un, av: s.av || undefined, season: s.season, week: s.week, picks: s.picks, bf: s.bf, ts: s.ts, key: s.key, app: APP }) });
       } catch (e: any) { error = 'offline'; break; }
       if (r.status === 429) { error = 'busy (rate limited), will retry'; break; }
       if (!r.ok && r.status >= 500) { error = 'server error ' + r.status; break; }

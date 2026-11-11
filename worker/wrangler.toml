@@ -1,7 +1,13 @@
-# Galaxy Gridiron AI proxy - Cloudflare Workers FREE plan (Workers + KV only).
+# Galaxy Gridiron AI proxy - Cloudflare Workers FREE plan (Workers + KV + D1, all inside the free allowance).
 # No secrets in this file. Secrets are set with:
 #   npx wrangler secret put OPENAI_API_KEY
 #   npx wrangler secret put PAIRING_CODE
+# JC-34 shared leaderboard (only when the owner moves the leaderboard behind the Worker):
+#   npx wrangler secret put LB_PASSWORD      # the family password
+#   npx wrangler secret put LB_LIVE          # live snapshot collection name
+#   npx wrangler secret put LB_ARCHIVE       # archive collection name
+#   npx wrangler secret put LB_SITE_SLUG     # here.now site slug
+#   npx wrangler secret put HERENOW_API_KEY  # here.now owner API key (Site Data read + write)
 name = "galaxy-gridiron-ai"
 main = "src/index.ts"
 compatibility_date = "2026-10-01"
@@ -11,6 +17,13 @@ workers_dev = true
 binding = "GG_KV"
 # No id needed: `wrangler deploy` creates the KV namespace automatically (wrangler >= 4.45)
 # and writes its id back here.
+
+# JC-34: atomic AI caps + leaderboard limits/tokens (tables are created on first use; see src/caps.ts SCHEMA).
+# Create once with `npx wrangler d1 create gg-caps` and paste the database_id here (or let `wrangler deploy`
+# auto-provision it, wrangler >= 4.45). Free plan: 5M rows read / 100k rows written per day.
+[[d1_databases]]
+binding = "GG_DB"
+database_name = "gg-caps"
 
 [vars]
 MONTH_CAP_USD = "5"          # hard monthly AI budget enforced by the Worker (below the $10 prepaid)

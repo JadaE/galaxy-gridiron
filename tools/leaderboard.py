@@ -10,6 +10,10 @@ The password comes ONLY from $GG_LEADERBOARD_PASSWORD.
   python3 tools/leaderboard.py keys                # write keys/family-collections.json (chmod 600) so the secret checks know the names
   python3 tools/leaderboard.py manifest [--dry-run] # declare live + archive in <publishSiteDir>/.herenow/data.json and close the
                                                     # OLD picks collection (read owner, insert none). The feedback block is untouched.
+  python3 tools/leaderboard.py manifest --owner-only [--dry-run]
+                                                    # JC-34 cut-over: live + archive become read OWNER / insert OWNER, so only
+                                                    # the Worker (owner API key) can read or write them and the old apps' password
+                                                    # probe stops working. Run ONLY after the Worker's /lb routes are deployed.
   python3 tools/leaderboard.py migrate [--dry-run]  # copy every OLD picks record into the archive with the owner API
                                                     # (idempotent: skips records already copied). Needs the new manifest LIVE.
   python3 tools/leaderboard.py status               # record counts: old / archive / live (owner API)
@@ -70,20 +74,21 @@ def manifest_path():
     return os.path.join(pub, '.herenow', 'data.json')
 
 
-def cmd_manifest(dry):
+def cmd_manifest(dry, owner_only=False):
     f, p = family(), manifest_path()
     m = json.load(open(p)); cols = m['collections']; old = CFG['picksCollection']
     if old not in cols: sys.exit('old picks collection is not in the manifest')
     base = json.loads(json.dumps(cols[old]))
-    live = dict(base, access={'read': 'public', 'insert': 'public', 'update': 'owner', 'delete': 'owner'})
+    live = dict(base, access={'read': 'owner' if owner_only else 'public', 'insert': 'owner' if owner_only else 'public', 'update': 'owner', 'delete': 'owner'})
     arch = json.loads(json.dumps(base)); arch['fields']['oc'] = {'type': 'number', 'minimum': 0}; arch['fields']['src'] = {'type': 'string', 'maxLength': 40}
-    arch['access'] = {'read': 'public', 'insert': 'owner', 'update': 'owner', 'delete': 'owner'}; arch.pop('rateLimit', None)
+    arch['access'] = {'read': 'owner' if owner_only else 'public', 'insert': 'owner', 'update': 'owner', 'delete': 'owner'}; arch.pop('rateLimit', None)
     cols[f['live']] = live; cols[f['archive']] = arch
     cols[old]['access'] = {'read': 'owner', 'insert': 'none', 'update': 'owner', 'delete': 'owner'}
     if len(cols) > 10: sys.exit('too many collections')
     out = json.dumps(m, indent=2) + '\n'
     if len(out) > 64000: sys.exit('manifest too large')
-    if dry: print(f'manifest OK (dry run): {len(cols)} collections; old picks -> read owner / insert none; feedback untouched'); return
+    mode = 'live + archive owner-only (Worker is the only reader/writer)' if owner_only else 'live public read+insert'
+    if dry: print(f'manifest OK (dry run): {len(cols)} collections; {mode}; old picks -> read owner / insert none; feedback untouched'); return
     open(p, 'w').write(out)
     print(f'manifest written: {len(cols)} collections (old picks closed to new writes and public reads; feedback block unchanged)')
 
@@ -215,5 +220,5 @@ def cmd_fix_late_week(a):
 
 if __name__ == '__main__':
     a = sys.argv[1:] or ['help']; dry = '--dry-run' in a
-    {'manifest': lambda: cmd_manifest(dry), 'migrate': lambda: cmd_migrate(dry), 'status': cmd_status, 'keys': cmd_keys,
+    {'manifest': lambda: cmd_manifest(dry, '--owner-only' in a), 'migrate': lambda: cmd_migrate(dry), 'status': cmd_status, 'keys': cmd_keys,
      'backup': lambda: cmd_backup(a[1] if len(a) > 1 else sys.exit('need DIR')), 'fix-late-week': lambda: cmd_fix_late_week(a)}.get(a[0], lambda: print(__doc__))()
