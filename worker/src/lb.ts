@@ -80,6 +80,14 @@ async function allSnaps(env: Env, now: number): Promise<Snap[]> {
   return out;
 }
 
+/** Our week number (1-22, as stored in snapshots) -> ESPN scoreboard query. Weeks 1-18 are the regular season
+ * (seasontype 2). Weeks 19-22 are the postseason (seasontype 3): 19 = Wild Card (ESPN week 1), 20 = Divisional (2),
+ * 21 = Conference (3), 22 = Super Bowl (ESPN week 5; ESPN week 4 is the Pro Bowl, which has no picks). */
+export function espnWeekQuery(week: number): { seasontype: 2 | 3; week: number } {
+  if (week <= 18) return { seasontype: 2, week };
+  return { seasontype: 3, week: week === 22 ? 5 : week - 18 };
+}
+
 // game id -> kickoff (ms), fetched by the Worker from ESPN; cached per isolate for 10 minutes
 const kickMemo = new Map<string, { at: number; k: Record<string, number> }>();
 async function kickoffs(season: number, week: number, now: number): Promise<Record<string, number>> {
@@ -87,7 +95,8 @@ async function kickoffs(season: number, week: number, now: number): Promise<Reco
   if (m && now - m.at < 600_000) return m.k;
   const k: Record<string, number> = {};
   try {
-    const r = await fetch(`${ESPN}?week=${week}&seasontype=2&dates=${season}`);
+    const q = espnWeekQuery(week);
+    const r = await fetch(`${ESPN}?week=${q.week}&seasontype=${q.seasontype}&dates=${season}`);
     if (r.ok) {
       const j: any = await r.json();
       for (const e of j?.events || []) { const t = Date.parse(e?.date || e?.competitions?.[0]?.date); if (GID.test(String(e?.id)) && Number.isFinite(t)) k[String(e.id)] = t; }

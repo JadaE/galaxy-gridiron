@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""v0.0.12 family leaderboard tooling (box only). Never prints the password or the derived collection names.
+"""Family leaderboard tooling (box only, owner API). Never prints the password or the derived collection names.
 
-The app derives the family collections from the shared password (app/src/picks/family.ts):
-  live    = "gg" + sha256(SALT + "\\n" + password)[:40]   (public read + insert, like the old picks collection)
-  archive = live + "_a"                                   (public read, OWNER insert: picks copied from the old collection,
+The two here.now Site Data collections are named from the shared password (same derivation since v0.0.12):
+  live    = "gg" + sha256(SALT + "\\n" + password)[:40]   (one insert-only snapshot per person per week)
+  archive = live + "_a"                                   (OWNER insert: picks copied from the old collection,
                                                            each with its original server time in `oc`)
+Since v0.0.15 (JC-34) the APP no longer derives these names or talks to Site Data for picks: it unlocks through the AI
+Worker (/lb/unlock checks the password server-side with a rate limit + lockout and returns an lb_ token bound to one
+Sleeper uid), and the Worker reads/writes both collections with the owner key (LB_LIVE / LB_ARCHIVE in its config).
+`manifest --owner-only` is the cut-over that closes the collections to public read/insert once the Worker is live.
 The password comes ONLY from $GG_LEADERBOARD_PASSWORD.
 
   python3 tools/leaderboard.py keys                # write keys/family-collections.json (chmod 600) so the secret checks know the names

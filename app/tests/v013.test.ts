@@ -61,7 +61,7 @@ const deps = (local: { p: PickMap }, fetcher: any, who = ME) => ({ season: 2026,
     assert.equal(snapsFor(s, { uid: '1', username: 'mockusera' }).length, 0, 'same name, different uid: not mine');
     assert.equal(snapsFor(s, { uid: '1', username: 'MOCKUSERA', display: 'MOCKUSERA' }).length, 0);
     assert.equal(snapsFor(s, { uid: '9', username: 'someoneelse' }).length, 1);
-    // end to end: a spoofed record with her name but another uid doesn't land on her phone
+    // end to end: a spoofed record with the same username but another uid is not restored to this phone
     const local2 = { p: {} as PickMap };
     const spoof = { live: [[rec({ createdAt: before(g6), data: { uid: '1000000000000000999', un: 'mockusera', picks: { [g6.id]: g6.away.abbr } } })]], archive: [] as any[][] };
     assert.equal((await restoreFromServer(deps(local2, site([], spoof)))).status, 'none'); assert.deepEqual(local2.p, {});

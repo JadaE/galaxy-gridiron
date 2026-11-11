@@ -473,8 +473,9 @@ function WeekGrid({ rows, weeks, width }: { rows: { uid: string; name: string; c
   );
 }
 
-/** v0.0.12: the shared leaderboard is for friends and family. The password is turned into the leaderboard's address on
- * this phone with a one-way hash; the password itself is never saved or sent anywhere. */
+/** The shared leaderboard is for friends and family. v0.0.15 (JC-34): the password is sent once over HTTPS to the Worker's
+ * /lb/unlock, which checks it server-side (rate limit + lockout) and returns an lb_ token. Only that token is kept (secure
+ * storage); the password itself is never saved on the phone. */
 type UnlockStatus = 'ok' | 'wrong' | 'locked' | 'offline' | 'not_setup';
 function UnlockCard({ onUnlock }: { onUnlock: (pw: string) => Promise<UnlockStatus> }) {
   const [pw, setPw] = useState('');

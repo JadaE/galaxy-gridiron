@@ -384,12 +384,15 @@ function withCors(req: Request, res: Response, env: Env): Response {
   h.set("vary", "origin");
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
 }
+// Every non-safelisted header the app sends must be here, or the browser preflight fails (the PWA would never share
+// picks): app/src/picks/sync.ts sends Authorization, Content-Type and Idempotency-Key (POST /lb/snap).
+export const CORS_ALLOW_HEADERS = "authorization, content-type, idempotency-key";
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const o = req.headers.get("origin");
     if (req.method === "OPTIONS") {
       if (!o || !corsOrigins(env).has(o)) return new Response(null, { status: 403 });
-      return new Response(null, { status: 204, headers: { "access-control-allow-origin": o, "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", "access-control-allow-headers": "authorization, content-type", "access-control-max-age": "86400", vary: "origin" } });
+      return new Response(null, { status: 204, headers: { "access-control-allow-origin": o, "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", "access-control-allow-headers": CORS_ALLOW_HEADERS, "access-control-max-age": "86400", vary: "origin" } });
     }
     return withCors(req, await handle(req, env), env);
   },

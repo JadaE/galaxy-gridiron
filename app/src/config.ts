@@ -20,7 +20,8 @@ export const CONFIG: AppConfig = {
   publicUpdatePath: cfg.publicUpdatePath,
   feedbackEnabled: cfg.feedbackEnabled === true && !!cfg.feedbackCollection,
   feedbackCollection: cfg.feedbackCollection,
-  leaderboardApi: typeof cfg.leaderboardApi === 'string' ? cfg.leaderboardApi.replace(/\/+$/, '') : '',
+  // an unfilled YOUR-* / YOUR_* placeholder is never used as an endpoint
+  leaderboardApi: typeof cfg.leaderboardApi === 'string' && !/your[-_]/i.test(cfg.leaderboardApi) ? cfg.leaderboardApi.replace(/\/+$/, '') : '',
 };
 export const SITE_SLUG = CONFIG.siteSlug;
 export const SITE_ORIGIN = `https://${CONFIG.siteSlug}.here.now`;

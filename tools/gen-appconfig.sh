@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Write app/src/appconfig.generated.json (gitignored) with ONLY the public keys the app bundles:
 #   siteSlug, publicUpdatePath (v0.0.12 store channel: a public, non-secret folder), feedbackEnabled, feedbackCollection,
-#   leaderboardApi (JC-34: the AI Worker's public https URL, or "" for no shared leaderboard).
+#   leaderboardApi (JC-34: the AI Worker's public https URL, or "" for no shared leaderboard). Anything that is not a plain
+#   https://host URL, and any unfilled YOUR-* / YOUR_* placeholder, becomes "" (never bundled as a real endpoint).
 # feedbackCollection is bundled ONLY when feedbackEnabled is true (v0.0.12 ships with feedback off, so it's "").
 # The private update channel, the old picks collection and every secret path stay out of the bundle (tools/leak-check.sh checks).
 # Values come from app/config.local.json, falling back per key to app/config.example.json (or, with no jq / no example,
@@ -22,7 +23,7 @@ jq -n --slurpfile l "$LOCAL" --slurpfile e "$EX" '
     publicUpdatePath: ($l.publicUpdatePath // $e.publicUpdatePath),
     feedbackEnabled: ($fb == true),
     feedbackCollection: (if $fb == true then ($l.feedbackCollection // $e.feedbackCollection) else "" end),
-    leaderboardApi: (($l.leaderboardApi // "") | if test("^https://[A-Za-z0-9.-]+$") then . else "" end) }' > "$OUT.tmp"
+    leaderboardApi: (($l.leaderboardApi // "") | if (test("^https://[A-Za-z0-9.-]+$") and (test("your[-_]"; "i") | not)) then . else "" end) }' > "$OUT.tmp"
 mv "$OUT.tmp" "$OUT"
 [ "$(jq -r 'keys|join(",")' "$OUT")" = "feedbackCollection,feedbackEnabled,leaderboardApi,publicUpdatePath,siteSlug" ] || { echo "gen-appconfig: unexpected keys" >&2; exit 1; }
 echo "gen-appconfig: wrote app/src/appconfig.generated.json (5 public keys, feedback $(jq -r 'if .feedbackEnabled then "on" else "off" end' "$OUT"))"

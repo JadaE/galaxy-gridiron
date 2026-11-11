@@ -71,6 +71,25 @@ setKv(async k => mem[k] ?? null, async (k, v) => { mem[k] = v; });
     assert.equal(JSON.parse(snapCall.init.body).picks['401873010'], 'NE');
     assert.ok(seen.every(x => x.u.startsWith(API + '/lb/')), 'never talks to Site Data directly');
   });
+  await t('JC-34 send-back: /lb/join 502/503/429 keeps the queued snapshot and says offline/busy, not "not linked"', async () => {
+    const me = { uid: '1000000000000000010', un: 'joinretry' };
+    for (const [st, re] of [[502, /^offline/], [503, /^offline/], [429, /^busy/]] as const) {
+      setLbToken(TOK);
+      await enqueue(snapshotFor(me, 2026, 7, { '401873010': { team: 'CHI', week: 7, at: 1, src: 'live' } }));
+      const r = await flush((async (u: string) => new Response('{}', { status: u.endsWith('/lb/join') ? st : 201 })) as any);
+      assert.ok(re.test(r.error!), `join ${st}: ${r.error}`); assert.ok(!/not linked/.test(r.error!));
+      assert.equal(r.sent, 0); assert.equal(r.left, 1); assert.equal(await pendingCount(), 1);
+    }
+    setLbToken(TOK);
+    const snap5 = await flush((async (u: string) => new Response('{}', { status: u.endsWith('/lb/join') ? 200 : 503 })) as any);
+    assert.ok(/^offline/.test(snap5.error!)); assert.equal(await pendingCount(), 1);
+    setLbToken(TOK);
+    const denied = await flush((async (u: string) => new Response('{}', { status: u.endsWith('/lb/join') ? 409 : 201 })) as any);
+    assert.ok(/not linked/.test(denied.error!), 'a real refusal still says not linked'); assert.equal(await pendingCount(), 1);
+    setLbToken(TOK);
+    const ok = await flush((async () => new Response('{"ok":true}', { status: 201 })) as any);
+    assert.equal(ok.sent, 1); assert.equal(await pendingCount(), 0);
+  });
   await t('reads come only from the Worker (GET /lb/snaps); records are re-checked', async () => {
     const urls: string[] = [];
     const rec = (o: any = {}) => ({ id: 'x' + Math.random(), uid: '1000000000000000009', un: 'friend2', season: 2026, week: 6, picks: { [g6.id]: g6.home.abbr, bad: 'zz' }, bf: {}, ts: 1, createdAt: g6.kickoff - 3600e3, ...o });
