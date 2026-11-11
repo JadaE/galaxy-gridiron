@@ -14,7 +14,8 @@ The password comes ONLY from $GG_LEADERBOARD_PASSWORD.
                                                     # (idempotent: skips records already copied). Needs the new manifest LIVE.
   python3 tools/leaderboard.py status               # record counts: old / archive / live (owner API)
   python3 tools/leaderboard.py backup [DIR]         # owner read of old / archive / live into DIR (default /workspace/gg-private-backups/jc17,
-                                                    # outside the repo; folder 700, files 600). Read-only on the server.
+                                                    # outside the repo; folder forced to 700 even if it exists, files 600). Read-only on
+                                                    # the server. Fails (writes nothing) if any collection is 404 or errors.
                                                     # CLEANUP: delete the JC-17 backups once JC-17 is closed (they hold everyone's picks).
   python3 tools/leaderboard.py fix-late-week --source-id REC_ID [--from-backup DIR] [--games FILE] [--out FILE]
                                                     [--apply] | [--rollback [--apply]]
@@ -24,7 +25,8 @@ The password comes ONLY from $GG_LEADERBOARD_PASSWORD.
       Dry run by default (prints the record id, every pick, kickoffs and oc). --apply inserts ONE owner-only archive record
       (src "fix-<source id>") with that week's picks, `oc` = 1 minute before the earliest corrected kickoff. Idempotent.
       --rollback plans the removal of exactly that record (exact src + season + user + week, exactly one match);
-      --rollback --apply deletes it. The late live record is never changed; no app rule trusts phone clocks.
+      --rollback --apply deletes it (non-zero exit if the delete fails). Rollback reads only the archive (no ESPN call).
+      The late live record is never changed; no app rule trusts phone clocks.
 Needs: app/config.local.json (siteSlug, picksCollection, publishSiteDir) and $HERENOW_API_KEY for migrate/status/backup/fix-late-week\n(fix-late-week dry run with --from-backup and --games needs no key).
 """
 import hashlib, json, os, sys, time, glob, urllib.request, urllib.error
@@ -135,9 +137,17 @@ BACKUP_DIR = '/workspace/gg-private-backups/jc17'
 def cmd_backup(d):
     f = family(); d = os.path.abspath(d or BACKUP_DIR)
     if d == ROOT or d.startswith(ROOT + os.sep): sys.exit('backups must go outside the repo')
-    os.makedirs(d, mode=0o700, exist_ok=True); os.chmod(d, 0o700); stamp = time.strftime('%Y%m%d-%H%M')
+    # Read everything FIRST: a 404 (collection not active) or any HTTP error stops the backup before a single file is
+    # written, so a backup is never silently empty or partial (list_all exits non-zero on any non-200/404 status).
+    got = []
     for label, c in (('old', CFG['picksCollection']), ('archive', f['archive']), ('live', f['live'])):
-        r = list_all(c) or []
+        r = list_all(c)
+        if r is None: sys.exit(f'backup FAILED: {label} collection returned 404 (not active); nothing written')
+        got.append((label, r))
+    os.makedirs(d, mode=0o700, exist_ok=True); os.chmod(d, 0o700)  # chmod also tightens an existing, looser folder
+    if os.stat(d).st_mode & 0o077: sys.exit('backup FAILED: could not make the backup folder 700')
+    stamp = time.strftime('%Y%m%d-%H%M')
+    for label, r in got:
         p = os.path.join(d, f'picks-{label}-{stamp}.json')
         with open(os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fh: json.dump(r, fh)
         os.chmod(p, 0o600); print(f'{label}: {len(r)} records -> picks-{label}-{stamp}.json (600)')
@@ -218,6 +228,19 @@ def cmd_fix_late_week(a):
     uid, season, week, late_games = jc17_uid(), JC17_SEASON, JC17_WEEK, list(JC17_LATE)
     apply_, rollback, bdir = '--apply' in a, '--rollback' in a, _arg(a, '--from-backup')
     if (apply_ or rollback) and bdir: sys.exit('--apply/--rollback read the live server, not a backup')
+    if rollback:
+        # Rollback needs only the archive: no schedule, no ESPN call. Dry run unless --apply; exact src tag + season +
+        # user + week, exactly one match; any failed delete exits non-zero.
+        f = family(); arch = list_all(f['archive'])
+        if arch is None: sys.exit('archive collection not active')
+        print(f'read from server (read-only): archive {len(arch)} records')
+        r = plan_rollback(arch, uid, season, week, src_id)
+        if not r['ok']: sys.exit('STOP: ' + r['why'])
+        print(f"rollback plan: delete archive record {r['id']} (src {r['tag']}, season {season}, week {week})")
+        if not apply_: print('DRY RUN: nothing deleted. Add --apply to delete exactly that record.'); return
+        st, j = owner('DELETE', f"{f['archive']}/{r['id']}")
+        if st not in (200, 204): sys.exit(f'delete failed: HTTP {st} {j.get("code", "")}')
+        print(f"deleted 1 archive record {r['id']}"); return
     if _arg(a, '--games'):
         g = json.load(open(_arg(a, '--games')))
         sched = {str(k): (v if isinstance(v, dict) else {'k': int(v), 'away': '?', 'home': '?'}) for k, v in g.items()}
@@ -228,14 +251,6 @@ def cmd_fix_late_week(a):
         f = family(); live, arch, where = list_all(f['live']), list_all(f['archive']), 'server (read-only)'
         if live is None or arch is None: sys.exit('live/archive collection not active')
     print(f'read from {where}: live {len(live)} records, archive {len(arch)} records')
-    if rollback:
-        r = plan_rollback(arch, uid, season, week, src_id)
-        if not r['ok']: sys.exit('STOP: ' + r['why'])
-        print(f"rollback plan: delete archive record {r['id']} (src {r['tag']}, season {season}, week {week})")
-        if not apply_: print('DRY RUN: nothing deleted. Add --apply to delete exactly that record.'); return
-        st, j = owner('DELETE', f"{family()['archive']}/{r['id']}")
-        if st not in (200, 204): sys.exit(f'delete failed: HTTP {st} {j.get("code", "")}')
-        print(f"deleted 1 archive record {r['id']}"); return
     p = plan_fix(live, arch, kick, uid, season, week, late_games)
     ct = lambda t: datetime.fromtimestamp(t / 1000).strftime('%a %b %d %I:%M %p CT')
     if not p['ok']: sys.exit('STOP: ' + p['why'])

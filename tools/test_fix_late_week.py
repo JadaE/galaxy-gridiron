@@ -48,4 +48,49 @@ check('refuses a user id that is not the pinned JC-17 user', 'not the pinned one
 check('pin is season 2026, week 9, Thursday ruled late', (L.JC17_SEASON, L.JC17_WEEK, L.JC17_LATE) == (2026, 9, ('401873037',)))
 check('backups refuse a folder inside the repo', 'outside the repo' in exits(lambda: (setattr(L, 'family', lambda: {}), L.cmd_backup(os.path.join(L.ROOT, 'backups')))))
 check('default backup folder is outside the repo and outside the app workspace', not L.BACKUP_DIR.startswith(L.ROOT) and '/fantasy-football' not in L.BACKUP_DIR)
+# ---- rollback command (mocked server; no network) ----
+import tempfile, stat
+calls = []
+def fake_list(c):
+    calls.append(('GET', c)); return [fixrec] if c == 'ARCH' else []
+def fake_owner(m, path, body=None, key=None):
+    calls.append((m, path)); return fake_owner.st, {}
+fake_owner.st = 204
+def no_espn(*a): raise AssertionError('ESPN must not be called')
+L.family = lambda: {'live': 'LIVE', 'archive': 'ARCH'}; L.list_all = fake_list; L.owner = fake_owner; L.espn_week = no_espn
+L.jc17_uid = lambda: U
+RB = ['fix-late-week', '--source-id', 'rec_late', '--rollback']
+calls.clear(); e = exits(lambda: L.cmd_fix_late_week(RB))
+check('rollback is a dry run by default (no DELETE without --apply)', e == '' and not any(c[0] == 'DELETE' for c in calls))
+check('rollback never calls ESPN and reads only the archive', [c for c in calls if c[0] == 'GET'] == [('GET', 'ARCH')])
+calls.clear(); fake_owner.st = 204; e = exits(lambda: L.cmd_fix_late_week(RB + ['--apply']))
+check('rollback --apply deletes exactly the one fix record', e == '' and [c for c in calls if c[0] == 'DELETE'] == [('DELETE', 'ARCH/arec1')])
+for st in (403, 404, 500):
+    fake_owner.st = st; e = exits(lambda: L.cmd_fix_late_week(RB + ['--apply']))
+    check(f'rollback exits non-zero when the delete fails (HTTP {st})', e.startswith('delete failed'))
+calls.clear(); e = exits(lambda: L.cmd_fix_late_week(['fix-late-week', '--source-id', 'rec_other', '--rollback', '--apply']))
+check('rollback with a different source id matches nothing and deletes nothing', e.startswith('STOP') and not any(c[0] == 'DELETE' for c in calls))
+L.list_all = lambda c: [dict(fixrec, data=dict(p['record'], season=2025))] if c == 'ARCH' else []
+calls.clear(); e = exits(lambda: L.cmd_fix_late_week(RB + ['--apply']))
+check('rollback refuses a fix record from another season', e.startswith('STOP') and not any(c[0] == 'DELETE' for c in calls))
+L.list_all = lambda c: [dict(fixrec, data=dict(p['record'], src='fix-rec_late2'))] if c == 'ARCH' else []
+check('rollback refuses a prefix-similar fix- tag', exits(lambda: L.cmd_fix_late_week(RB)).startswith('STOP'))
+# ---- backup: folder forced to 700, never an empty/partial backup ----
+L.CFG['picksCollection'] = 'OLD'
+with tempfile.TemporaryDirectory() as t:
+    d = os.path.join(t, 'bk'); os.makedirs(d); os.chmod(d, 0o755)
+    L.list_all = lambda c: [{'id': 'r_' + c}]
+    check('backup succeeds with mock data', exits(lambda: L.cmd_backup(d)) == '' and len(os.listdir(d)) == 3)
+    check('backup tightens an existing 755 folder to 700', stat.S_IMODE(os.stat(d).st_mode) == 0o700)
+    check('backup files are 600', all(stat.S_IMODE(os.stat(os.path.join(d, x)).st_mode) == 0o600 for x in os.listdir(d)))
+    d2 = os.path.join(t, 'bk2')
+    L.list_all = lambda c: None if c == 'LIVE' else [{'id': 'r'}]
+    e = exits(lambda: L.cmd_backup(d2))
+    check('backup FAILS on a 404 and writes nothing', 'FAILED' in e and not (os.path.exists(d2) and os.listdir(d2)))
+    def boom(c):
+        if c == 'ARCH': sys.exit('list failed: HTTP 500 ')
+        return [{'id': 'r'}]
+    L.list_all = boom
+    e = exits(lambda: L.cmd_backup(d2))
+    check('backup FAILS on an HTTP error and writes nothing', 'HTTP 500' in e and not (os.path.exists(d2) and os.listdir(d2)))
 print(f'{ok} passed, 0 failed')
