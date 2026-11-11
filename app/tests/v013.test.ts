@@ -2,8 +2,7 @@
 // Run: npx tsx --require ./tests/rn-shim.cjs tests/v013.test.ts
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import { setKv, setFamilyKey, Snap } from '../src/picks/sync';
-import { deriveFamilyKey } from '../src/picks/family';
+import { setKv, setLbToken, setLbApi, Snap } from '../src/picks/sync';
 import { restoreFromServer, mergeRestored, serverPicks, snapsFor, weeksToShare, restoreMessage } from '../src/picks/restore';
 import { Game, PickMap } from '../src/picks/core';
 import { VERSION_CODE } from '../src/version';
@@ -14,17 +13,16 @@ const games: Record<string, Game> = {}; Object.values(byWeek).flat().forEach(g =
 const g6 = byWeek[6][0], g6b = byWeek[6][1], g5 = byWeek[5][0];
 const mem: Record<string, string> = {};
 setKv(async k => mem[k] ?? null, async (k, v) => { mem[k] = v; });
-const K = deriveFamilyKey('mock-family-password');
+const TOK = 'lb_' + 'B'.repeat(43), API = 'https://mock-worker.example.workers.dev';
+setLbApi(API);
 const ME = { uid: '1000000000000000101', username: 'MockUserA' };
-const rec = (o: any) => ({ id: 'r' + Math.random(), createdAt: o.createdAt, data: { app: 'gg', uid: ME.uid, un: 'mockusera', season: 2026, week: 6, bf: {}, ts: 1, ...o.data } });
-// live: one page; archive: two pages (nextCursor); plus another user's record
+// JC-34: the Worker returns live + archive already merged (archive records carry their original time as createdAt)
+const rec = (o: any) => ({ id: 'r' + Math.random(), createdAt: Date.parse(o.data?.oc ? new Date(o.data.oc).toISOString() : o.createdAt), uid: ME.uid, un: 'mockusera', season: 2026, week: 6, bf: {}, ts: 1, ...o.data });
 function site(posts: string[], pages = { live: [] as any[][], archive: [] as any[][] }) {
   return (async (u: string, init?: any) => {
     if (init?.method === 'POST') { posts.push(u); return new Response('{}', { status: 201 }); }
-    const coll = u.includes('/' + K.archive + '?') ? 'archive' : u.includes('/' + K.live + '?') ? 'live' : '';
-    if (!coll) return new Response('{}', { status: 404 });
-    const list = pages[coll as 'live' | 'archive']; const c = Number(new URL(u).searchParams.get('cursor') || 0);
-    return new Response(JSON.stringify({ records: list[c] || [], nextCursor: c + 1 < list.length ? String(c + 1) : null }));
+    if (u !== API + '/lb/snaps?season=2026') return new Response('{}', { status: 404 });
+    return new Response(JSON.stringify({ records: [...pages.live.flat(), ...pages.archive.flat()] }));
   }) as any;
 }
 const before = (g: Game, s = 3600e3) => new Date(g.kickoff - s).toISOString();
@@ -39,13 +37,13 @@ const deps = (local: { p: PickMap }, fetcher: any, who = ME) => ({ season: 2026,
 (async () => {
   console.log('Restore picks from the leaderboard');
   await t('no password: nothing is read, asks gently only when the phone has no picks', async () => {
-    setFamilyKey(null); let called = 0;
+    setLbToken(null); let called = 0;
     const r = await restoreFromServer(deps({ p: {} }, (async () => { called++; return new Response('{}'); }) as any));
     assert.equal(r.status, 'locked'); assert.equal(called, 0);
     assert.ok(/password/.test(restoreMessage(r, false))); assert.equal(restoreMessage(r, true), '');
   });
-  setFamilyKey(K);
-  await t('restores from live AND archive (paged via nextCursor); archive keeps its original time', async () => {
+  setLbToken(TOK);
+  await t('restores from the Worker-merged live + archive records; archive keeps its original time', async () => {
     const local = { p: {} as PickMap }, posts: string[] = [];
     const r = await restoreFromServer(deps(local, site(posts, pages())));
     assert.deepEqual(r, { status: 'restored', n: 3 });
@@ -54,14 +52,19 @@ const deps = (local: { p: PickMap }, fetcher: any, who = ME) => ({ season: 2026,
     assert.equal(restoreMessage(r, false), 'Restored 3 picks from the leaderboard');
     assert.equal(posts.length, 0, 'restore never writes to the site');
   });
-  await t('username match is case-insensitive; a wrong username gets nothing', async () => {
+  await t('JC-34: matches by Sleeper user id only; the same username on a different id is never merged', async () => {
     const other = { uid: '1000000000000000303', username: 'MockNobody' };
     const local = { p: {} as PickMap };
     const r = await restoreFromServer(deps(local, site([], pages()), other));
     assert.equal(r.status, 'none'); assert.deepEqual(local.p, {});
     const s = [{ id: 'a', uid: '9', un: 'MOCKUSERA', season: 2026, week: 6, picks: {}, bf: {}, ts: 0, createdAt: 0 } as Snap];
-    assert.equal(snapsFor(s, { uid: '1', username: 'mockusera' }).length, 1);
-    assert.equal(snapsFor(s, { uid: '1', username: 'mockuser' }).length, 0);
+    assert.equal(snapsFor(s, { uid: '1', username: 'mockusera' }).length, 0, 'same name, different uid: not mine');
+    assert.equal(snapsFor(s, { uid: '1', username: 'MOCKUSERA', display: 'MOCKUSERA' }).length, 0);
+    assert.equal(snapsFor(s, { uid: '9', username: 'someoneelse' }).length, 1);
+    // end to end: a spoofed record with her name but another uid doesn't land on her phone
+    const local2 = { p: {} as PickMap };
+    const spoof = { live: [[rec({ createdAt: before(g6), data: { uid: '1000000000000000999', un: 'mockusera', picks: { [g6.id]: g6.away.abbr } } })]], archive: [] as any[][] };
+    assert.equal((await restoreFromServer(deps(local2, site([], spoof)))).status, 'none'); assert.deepEqual(local2.p, {});
   });
   await t('merge: union; a newer local pick is kept; an older differing one is replaced by the newer server copy', () => {
     const server: PickMap = { a1: { team: 'CHI', week: 6, at: 100, src: 'live' }, a2: { team: 'NE', week: 6, at: 100, src: 'live' }, a3: { team: 'KC', week: 6, at: 100, src: 'live' } };

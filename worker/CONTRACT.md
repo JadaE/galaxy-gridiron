@@ -77,3 +77,19 @@ Health check: `{ "ok": true, "service": "galaxy-gridiron-ai", "readOnly": true }
 3. `/pair` has the extra error codes `bad_code`, `rate_limited`, `device_limit`, `not_configured` (the brief only listed /chat errors). There's also `not_found` (404) for unknown routes.
 4. Added `GET /` health check.
 5. Added `MAX_DEVICES` var (default 5) so a leaked pairing code can't pair unlimited phones.
+
+## JC-34 changes (v0.0.15)
+
+### Atomic caps (D1)
+`/chat` now reserves before calling OpenAI, in ONE D1 transaction (`src/caps.ts`): if `dailyCount >= dailyLimit` or `monthSpend + worstCase > monthCap` it refuses (`daily_limit` / `cap_reached`, 429, no upstream call); otherwise it counts the question and adds the worst-case cost (input UTF-8 bytes as tokens + max output tokens). Success swaps the reservation for the real cost; an upstream error or network failure releases it (question and cost given back). `GET /usage` reads the same D1 counters, including in-flight reservations. The old KV `spend:`/`daily:` values are read only to seed D1 rows that don't exist yet (cut-over), never as a fallback.
+
+| HTTP | error | when |
+|---|---|---|
+| 503 | `unavailable` | D1 binding missing or erroring. `/chat` and `/usage` fail closed: no OpenAI call |
+
+### Shared leaderboard (`/lb/*`)
+All need the leaderboard secrets (`LB_PASSWORD`, `LB_LIVE`, `LB_SITE_SLUG`, `HERENOW_API_KEY`; `LB_ARCHIVE` optional) and D1, else 503 `not_configured` / `unavailable`.
+- `POST /lb/unlock {password}` -> `{token}` (`lb_` + 256-bit). Each try is counted in D1 BEFORE the constant-time compare: 5 per IP per hour and 20 per day for everyone, then 429 `rate_limited` until the window ends. Wrong = 403 `bad_code` (one message for every wrong answer). A correct unlock gives its try back. Only SHA-256(token) is stored (`lbtok`).
+- `POST /lb/join {uid, un}` (Bearer lb token) -> binds the token to one Sleeper user id, once. Another uid later = 403 `forbidden`.
+- `POST /lb/snap {season, week, picks, bf, ts, un?, av?, key?}` (Bearer) -> 201. Written to the live collection as the bound uid only; a body naming another uid = 403; not joined = 403. 120 writes per token per hour.
+- `GET /lb/snaps?season=YYYY` (Bearer) -> `{records: [{id, uid, un, av?, season, week, picks, bf, ts, createdAt}]}`, live + archive merged (archive uses its original time). Other people's `picks`/`bf` for a game are omitted until that game's kickoff, from the ESPN schedule the Worker fetches itself; unknown kickoff = hidden. The caller's own bound uid is always shown. 600 reads per token per hour.

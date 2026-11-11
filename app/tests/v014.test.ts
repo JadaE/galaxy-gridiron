@@ -3,7 +3,7 @@
 // Mock names/IDs only. Run: npx tsx --require ./tests/rn-shim.cjs tests/v014.test.ts
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import { fetchSnaps, resolve, setFamilyKey, setKv, Snap } from '../src/picks/sync';
+import { resolve, Snap } from '../src/picks/sync';
 import { serverPicks } from '../src/picks/restore';
 import { Game, PickMap, seasonRecord, weekRecord } from '../src/picks/core';
 import { VERSION_CODE, VERSION_NAME } from '../src/version';
@@ -81,18 +81,8 @@ const onlyLive = (p: PickMap) => Object.fromEntries(Object.entries(p).filter(([,
     assert.equal(a.picks[lateG.id].src, 'backfill');
     assert.deepEqual(a.picks[byWeek[5][0].id], before.find(x => x.uid === A.uid)!.picks[byWeek[5][0].id]);
   });
-  await t('JC-17: `oc` is trusted only from the owner archive, never from the public live collection', async () => {
-    const mem: Record<string, string> = {}; setKv(async k => mem[k] ?? null, async (k, v) => { mem[k] = v; });
-    const K = { live: 'gg' + '1'.repeat(40), archive: 'gg' + '1'.repeat(40) + '_a' }; setFamilyKey(K);
-    const rec = (id: string, oc?: number) => ({ id, createdAt: new Date(lastKick + 86400e3).toISOString(), data: { uid: A.uid, un: A.un, season: 2026, week: W, picks: fixPicks, bf: {}, ts: 0, app: 'gg', ...(oc ? { oc } : {}) } });
-    const f = (liveRecs: any[], archRecs: any[]) => (async (u: string) => ({ ok: true, status: 200, json: async () => ({ records: u.includes('_a') ? archRecs : liveRecs }) })) as any;
-    const spoof = (await fetchSnaps(2026, true, f([rec('l1', restKick - 60e3)], []))).snaps;
-    assert.ok(Object.values(resolve(spoof, games)[0].picks).every(x => x.src === 'backfill'));
-    const owned = (await fetchSnaps(2026, true, f([rec('l1')], [rec('a1', restKick - 60e3)]))).snaps;
-    assert.ok(Object.values(resolve(owned, games)[0].picks).every(x => x.src === 'live'));
-    setFamilyKey(null);
-  });
-  await t('version is 0.0.14 (14)', () => { assert.equal(VERSION_CODE, 14); assert.equal(VERSION_NAME, '0.0.14'); });
+  // JC-34: the `oc`-only-from-archive rule now lives in the Worker (worker/test/jc34.test.ts, cleanRecord)
+  await t('version is 0.0.14 or later', () => { assert.ok(VERSION_CODE >= 14); assert.ok(VERSION_NAME >= '0.0.14'); });
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);
 })();
