@@ -24,5 +24,6 @@
     },
     "iphoneTestUsername": "YOUR_TEST_USERNAME"
   },
-  "publishSiteDir": ""
+  "publishSiteDir": "",
+  "leaderboardApi": "https://YOUR-WORKER.YOUR-SUBDOMAIN.workers.dev"
 }

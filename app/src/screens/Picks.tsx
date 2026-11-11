@@ -15,8 +15,8 @@ import { loadWeek, nflNow, REG_WEEKS } from '../picks/espn';
 import { loadPicks, savePicks, loadLbMe, saveLbMe, LbMe, loadPref, savePref } from '../picks/store';
 import { parseNotes, ParseResult } from '../picks/parse';
 import { TEAMS } from '../picks/teams';
-import { fetchSnaps, resolve, snapshotFor, enqueue, flush, pendingCount, Person, setFamilyKey, probeFamilyKey } from '../picks/sync';
-import { deriveFamilyKey, validKey, FamilyKey } from '../picks/family';
+import { fetchSnaps, resolve, snapshotFor, enqueue, flush, pendingCount, Person, setLbToken, unlockLeaderboard } from '../picks/sync';
+import { validToken } from '../picks/family';
 import { getSecret, setSecret, delSecret } from '../ai/secure';
 import { restoreFromServer, onRestored, mergeRestored, weeksToShare, restoreMessage } from '../picks/restore';
 
@@ -127,8 +127,8 @@ export default function Picks() {
   const [refreshing, setRefreshing] = useState(false);
   const [err, setErr] = useState('');
   const [lbMe, setLbMe] = useState<LbMe | null>(null);
-  // v0.0.12: derived family-leaderboard collections (never the password). null = no shared leaderboard on this device.
-  const [fk, setFk] = useState<FamilyKey | null>(null);
+  // JC-34 (v0.0.15): the server-issued leaderboard token (never the password). null = no shared leaderboard on this device.
+  const [fk, setFk] = useState<string | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [lbState, setLbState] = useState<{ loading?: boolean; err?: string; stale?: boolean; pending?: number; at?: number }>({});
   const [inclBf, setInclBf] = useState(true);
@@ -155,7 +155,8 @@ export default function Picks() {
       setErr('');
     } catch (e: any) { setErr(e?.message || String(e)); }
   }, [uid]);
-  useEffect(() => { getSecret('lb_family').then(v => { let k: any = null; try { k = JSON.parse(v || 'null'); } catch {} if (validKey(k)) { setFamilyKey(k); setFk(k); } }); }, []);
+  // v0.0.12-0.0.14 kept derived collection names under 'lb_family'; they no longer unlock anything, so drop them
+  useEffect(() => { delSecret('lb_family').catch(() => {}); getSecret('lb_token').then(v => { if (validToken(v)) { setLbToken(v); setFk(v); } }); }, []);
   // v0.0.13: picks restored from the leaderboard (at app start or after the password) show up here too
   useEffect(() => onRestored(async () => { if (!season) return; const r = mergeRestored(picksRef.current, await loadPicks(uid, season)); picksRef.current = r.picks; setPicks(r.picks); }), [uid, season]);
   useEffect(() => { loadAll(); loadLbMe(uid).then(setLbMe); loadPref('inclBf', '1').then(v => setInclBf(v === '1')); }, [uid]);
@@ -330,16 +331,15 @@ export default function Picks() {
           {view === 'board' && (
             <Board me={me} lbMe={lbMe} locked={!fk}
               onUnlock={async (pw) => {
-                const k = deriveFamilyKey(pw);
-                const r = await probeFamilyKey(k);
-                if (r !== 'ok') return r;
-                await setSecret('lb_family', JSON.stringify(k)); setFamilyKey(k); setFk(k);
+                const r = await unlockLeaderboard(pw);
+                if (r.status !== 'ok') return r.status;
+                await setSecret('lb_token', r.token); setLbToken(r.token); setFk(r.token);
                 restoreFromServer({ season, curWeek, who: { uid, username: me.username, display: me.display_name }, load: () => loadPicks(uid, season), save: p => savePicks(uid, season, p), loadWeek: (s, w) => loadWeek(s, w) })
                   .then(rr => { const m = restoreMessage(rr, true); if (m) flash(m); }).catch(() => {});
                 if (!lbMe) setSheet('join');
                 return 'ok';
               }}
-              onLock={async () => { await delSecret('lb_family'); setFamilyKey(null); setFk(null); setPeople([]); }} people={people} byWeek={byWeek} weeks={weeks} myPicks={picks} curWeek={curWeek} width={cw} inclBf={inclBf}
+              onLock={async () => { await delSecret('lb_token'); setLbToken(null); setFk(null); setPeople([]); }} people={people} byWeek={byWeek} weeks={weeks} myPicks={picks} curWeek={curWeek} width={cw} inclBf={inclBf}
               setInclBf={v => { setInclBf(v); savePref('inclBf', v ? '1' : '0'); }} state={lbState} onJoin={() => setSheet('join')} onReload={() => loadBoard(true)}
               onLeave={async () => { await saveLbMe(uid, null); setLbMe(null); setPeople([]); }} />
           )}
@@ -375,7 +375,7 @@ export default function Picks() {
 function Board({ me, lbMe, locked, onUnlock, onLock, people, byWeek, weeks, myPicks, curWeek, width, inclBf, setInclBf, state, onJoin, onReload, onLeave }: {
   me: { user_id: string; username: string; display_name?: string; avatar?: string }; lbMe: LbMe | null; people: Person[]; byWeek: Record<number, Game[]>; weeks: number[]; myPicks: PickMap; curWeek: number; width: number;
   inclBf: boolean; setInclBf: (v: boolean) => void; state: { loading?: boolean; err?: string; stale?: boolean; pending?: number; at?: number }; onJoin: () => void; onReload: () => void; onLeave: () => void;
-  locked: boolean; onUnlock: (pw: string) => Promise<'ok' | 'wrong' | 'offline'>; onLock: () => void;
+  locked: boolean; onUnlock: (pw: string) => Promise<UnlockStatus>; onLock: () => void;
 }) {
   const sample = people.some(p => p.sample);
   if (locked && !sample) return <UnlockCard onUnlock={onUnlock} />;
@@ -475,14 +475,15 @@ function WeekGrid({ rows, weeks, width }: { rows: { uid: string; name: string; c
 
 /** v0.0.12: the shared leaderboard is for friends and family. The password is turned into the leaderboard's address on
  * this phone with a one-way hash; the password itself is never saved or sent anywhere. */
-function UnlockCard({ onUnlock }: { onUnlock: (pw: string) => Promise<'ok' | 'wrong' | 'offline'> }) {
+type UnlockStatus = 'ok' | 'wrong' | 'locked' | 'offline' | 'not_setup';
+function UnlockCard({ onUnlock }: { onUnlock: (pw: string) => Promise<UnlockStatus> }) {
   const [pw, setPw] = useState('');
   const [st, setSt] = useState<{ busy?: boolean; err?: string }>({});
   const go = async () => {
     setSt({ busy: true });
     const r = await onUnlock(pw);
     if (r === 'ok') { setPw(''); setSt({}); return; }
-    setSt({ err: r === 'wrong' ? "That password didn't work. Check with the app owner." : "Couldn't check right now. Try again when you have signal." });
+    setSt({ err: r === 'wrong' ? "That password didn't work. Check with the app owner." : r === 'locked' ? 'Too many tries. Wait an hour and try again.' : r === 'not_setup' ? "The shared leaderboard isn't set up yet." : "Couldn't check right now. Try again when you have signal." });
   };
   return (
     <Card title="Shared leaderboard" emoji="🔒" accent={C.gold}>

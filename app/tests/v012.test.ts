@@ -2,7 +2,8 @@
 import assert from 'node:assert/strict';
 import fs from 'fs';
 import { sha256Hex } from '../src/picks/sha256';
-import { deriveFamilyKey, validKey } from '../src/picks/family';
+import * as family from '../src/picks/family';
+import * as sync from '../src/picks/sync';
 import { lineSegments, runningPctPoints } from '../src/graphpts';
 import { sideNotes } from '../src/matchupnote';
 import { titleSize } from '../src/theme';
@@ -11,24 +12,23 @@ import { UPDATE_URL } from '../src/update';
 let pass = 0, fail = 0;
 const t = (n: string, f: () => any) => { try { f(); pass++; console.log('  ✓', n); } catch (e: any) { fail++; console.log('  ✗', n, '\n     ', e.message); } };
 
-console.log('Family password -> collection names');
+console.log('Family password (server-side since JC-34)');
 t('sha256 matches the standard test vectors', () => {
   assert.equal(sha256Hex(''), 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855');
   assert.equal(sha256Hex('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
   assert.equal(sha256Hex('a'.repeat(1000)), '41edece42d63e8d9bf515a9ba6932e1c20cbc9f5a5d134645adb5db1b9737ea3');
   assert.equal(sha256Hex('héllo ✓ 🏈'), require('crypto').createHash('sha256').update('héllo ✓ 🏈').digest('hex'));
 });
-t('derived names are valid here.now collection names, stable, and differ per password', () => {
-  const a = deriveFamilyKey('mock-pass-1'), b = deriveFamilyKey('mock-pass-2');
-  for (const k of [a, b]) { assert.ok(/^[a-z][a-z0-9_]*$/.test(k.live) && k.live.length <= 64); assert.ok(/^[a-z][a-z0-9_]*$/.test(k.archive) && k.archive.length <= 64); assert.ok(validKey(k)); }
-  assert.deepEqual(deriveFamilyKey('mock-pass-1'), a); assert.deepEqual(deriveFamilyKey('  mock-pass-1 '), a);
-  assert.notEqual(a.live, b.live);
-  assert.equal(validKey({ live: 'nope', archive: 'nope_a' }), false);
+t('JC-34: the app no longer derives or probes collection names (no salt, no oracle); only server tokens', () => {
+  for (const m of [family, sync] as any[]) for (const k of ['FAMILY_SALT', 'deriveFamilyKey', 'probeFamilyKey', 'validKey', 'setFamilyKey']) assert.equal(m[k], undefined, k);
+  const src = ['family.ts', 'sync.ts', 'restore.ts'].map(f => fs.readFileSync(__dirname + '/../src/picks/' + f, 'utf8')).join('\n');
+  assert.ok(!src.includes('galaxy-gridiron/leaderboard/v1'), 'salt gone'); assert.ok(!src.includes('/.herenow/data/'), 'no direct Site Data');
+  assert.ok(family.validToken('lb_' + 'x'.repeat(43))); assert.ok(!family.validToken('gg' + '0'.repeat(40)));
 });
 
 console.log('Store config');
 t('no private update channel or picks collection is bundled; feedback is off', () => {
-  assert.deepEqual(Object.keys(CONFIG).sort(), ['feedbackCollection', 'feedbackEnabled', 'publicUpdatePath', 'siteSlug']);
+  assert.deepEqual(Object.keys(CONFIG).sort(), ['feedbackCollection', 'feedbackEnabled', 'leaderboardApi', 'publicUpdatePath', 'siteSlug']);
   assert.equal(CONFIG.feedbackEnabled, false);
   assert.ok(UPDATE_URL.endsWith('/' + CONFIG.publicUpdatePath + '/version.json'));
   const gen = JSON.parse(fs.readFileSync(__dirname + '/../src/appconfig.generated.json', 'utf8'));

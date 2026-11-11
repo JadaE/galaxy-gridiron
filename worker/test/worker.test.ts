@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handle, safeEqual, localParts, corsOrigins, type Env } from "../src/index";
 import { costUsd, readUsage } from "../src/pricing";
+import { FakeD1 } from "./fakeD1";
+import { _resetSchemaCache } from "../src/caps";
 
 class MemKV {
   store = new Map<string, string>();
@@ -14,6 +16,7 @@ class MemKV {
 
 const NOW = new Date("2026-10-21T14:00:00Z"); // 9:00 AM CT
 let kv: MemKV;
+let d1: FakeD1;
 let env: Env;
 let upstream: ReturnType<typeof vi.fn>;
 
@@ -41,7 +44,8 @@ const chatBody = (tier = "budget") => ({ tier, messages: [{ role: "user", conten
 
 beforeEach(() => {
   kv = new MemKV();
-  env = { GG_KV: kv as unknown as KVNamespace, OPENAI_API_KEY: "test-not-a-real-key", PAIRING_CODE: "galaxy-42-tacos", MONTH_CAP_USD: "5", DAILY_LIMIT: "30" };
+  d1 = new FakeD1(); _resetSchemaCache();
+  env = { GG_DB: d1, GG_KV: kv as unknown as KVNamespace, OPENAI_API_KEY: "test-not-a-real-key", PAIRING_CODE: "galaxy-42-tacos", MONTH_CAP_USD: "5", DAILY_LIMIT: "30" };
   upstream = vi.fn(async () => okUpstream());
   vi.stubGlobal("fetch", upstream);
 });

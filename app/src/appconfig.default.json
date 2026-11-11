@@ -2,5 +2,6 @@
   "siteSlug": "YOUR-SITE-SLUG",
   "publicUpdatePath": "store",
   "feedbackEnabled": false,
-  "feedbackCollection": ""
+  "feedbackCollection": "",
+  "leaderboardApi": ""
 }

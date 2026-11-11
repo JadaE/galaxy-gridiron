@@ -5,9 +5,10 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import { handle } from '../../worker/src/index';
 import * as ai from '../src/ai/client';
+import { FakeD1 } from '../../worker/test/fakeD1';
 
 class KV { m = new Map<string, string>(); async get(k: string) { return this.m.get(k) ?? null; } async put(k: string, v: string) { this.m.set(k, v); } async delete(k: string) { this.m.delete(k); } async list({ prefix = '' } = {}) { return { keys: [...this.m.keys()].filter(k => k.startsWith(prefix)).map(name => ({ name })), list_complete: true }; } }
-const env: any = { GG_KV: new KV(), OPENAI_API_KEY: 'test-not-a-key', PAIRING_CODE: 'galaxy-123', MONTH_CAP_USD: '5', DAILY_LIMIT: '3' };
+const env: any = { GG_DB: new FakeD1(), GG_KV: new KV(), OPENAI_API_KEY: 'test-not-a-key', PAIRING_CODE: 'galaxy-123', MONTH_CAP_USD: '5', DAILY_LIMIT: '3' };
 const realFetch = globalThis.fetch;
 let upstreamMode: 'ok' | 'fail' = 'ok';
 let lastUpstreamBody: any = null;
@@ -53,8 +54,7 @@ server.listen(0, async () => {
     try { await ai.chat('budget', [{ role: 'user', content: 'x' }], {}); assert.fail(); } catch (e: any) { assert.equal(e.code, 'daily_limit'); assert.equal(e.usage.dailyCount, 3); }
   });
   await t('monthly cap -> cap_reached', async () => {
-    const month = [...env.GG_KV.m.keys()].find((k: string) => k.startsWith('spend:'));
-    env.GG_KV.m.set(month, '5.01');
+    env.GG_DB.db.exec('UPDATE spend SET micros = 5010000'); // JC-34: the month spend now lives in D1
     try { await ai.chat('budget', [{ role: 'user', content: 'x' }], {}); assert.fail(); } catch (e: any) { assert.equal(e.code, 'cap_reached'); assert.ok(e.usage.monthSpendUsd >= 5); assert.match(e.message, /Rules chat still works/); }
   });
   await t('server forgot device -> local token cleared', async () => {

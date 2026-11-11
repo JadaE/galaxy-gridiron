@@ -106,7 +106,7 @@ function Main() {
         try {
           const n = await nflNow();
           const hadLocal = Object.keys(await loadPicks(u.user_id, n.season)).length > 0;
-          const r = await restoreOnStart({ uid: u.user_id, username: u.username || name, display: u.display_name }, () => getSecret('lb_family'),
+          const r = await restoreOnStart({ uid: u.user_id, username: u.username || name, display: u.display_name }, () => getSecret('lb_token'),
             { season: n.season, curWeek: n.week, load: () => loadPicks(u.user_id, n.season), save: p => savePicks(u.user_id, n.season, p), loadWeek: (s, w) => loadWeek(s, w) });
           const m = restoreMessage(r, hadLocal);
           if (m) { setNote(m); setTimeout(() => setNote(x => (x === m ? '' : x)), 6000); }

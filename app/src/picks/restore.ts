@@ -4,14 +4,13 @@
 // into the phone's picks: union by game, a newer local pick is never overwritten, re-running adds nothing.
 // Restored picks are flagged `rs` so they're never re-shared as new snapshots. Read-only: nothing is written to the site.
 import { Game, Pick, PickMap } from './core';
-import { fetchSnaps, hasFamilyKey, resolve, setFamilyKey, Snap } from './sync';
+import { fetchSnaps, hasLbToken, resolve, setLbToken, Snap } from './sync';
 
 export type Who = { uid: string; username: string; display?: string };
 
-/** This user's snapshots only: same Sleeper user id, or the same name (case-insensitive). */
+/** This user's snapshots only: same Sleeper user id. JC-34: never by name (a name is easy to copy). */
 export function snapsFor(snaps: Snap[], who: Who): Snap[] {
-  const names = new Set([who.username, who.display].filter(Boolean).map(s => String(s).trim().toLowerCase()));
-  return snaps.filter(s => s.uid === who.uid || names.has(s.un.trim().toLowerCase()));
+  return snaps.filter(s => s.uid === who.uid);
 }
 
 /** Her picks as the server has them. With games: kickoff-locked like the board. Without: newest snapshot per game. */
@@ -54,7 +53,7 @@ export const onRestored = (f: (n: number) => void) => { listeners.add(f); return
 export function restoreFromServer(d: Deps): Promise<RestoreResult> {
   if (running) return running;
   running = (async (): Promise<RestoreResult> => {
-    if (!hasFamilyKey()) return { status: 'locked' };
+    if (!hasLbToken()) return { status: 'locked' };
     let snaps: Snap[];
     try { snaps = (await fetchSnaps(d.season, true, d.fetcher)).snaps; } catch { return { status: 'offline' }; }
     if (!snapsFor(snaps, d.who).length) return { status: 'none' };
@@ -73,9 +72,9 @@ export function restoreFromServer(d: Deps): Promise<RestoreResult> {
   return running;
 }
 
-/** App start / username entry: load the saved family key (if any) and restore. Never sees the password. */
-export async function restoreOnStart(who: Who, getKey: () => Promise<string | null>, d: Omit<Deps, 'who'>): Promise<RestoreResult> {
-  if (!hasFamilyKey()) { try { const k = JSON.parse((await getKey()) || 'null'); if (k) setFamilyKey(k); } catch {} }
+/** App start / username entry: load the saved leaderboard token (if any) and restore. Never sees the password. */
+export async function restoreOnStart(who: Who, getToken: () => Promise<string | null>, d: Omit<Deps, 'who'>): Promise<RestoreResult> {
+  if (!hasLbToken()) { try { const t = await getToken(); if (t) setLbToken(t); } catch {} }
   return restoreFromServer({ ...d, who });
 }
 
