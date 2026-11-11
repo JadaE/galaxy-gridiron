@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { handle, safeEqual, localParts, corsOrigins, type Env } from "../src/index";
+import worker, { handle, safeEqual, localParts, corsOrigins, type Env } from "../src/index";
 import { costUsd, readUsage } from "../src/pricing";
 import { FakeD1 } from "./fakeD1";
 import { _resetSchemaCache } from "../src/caps";
@@ -279,5 +279,40 @@ describe("cors origins", () => {
   it("come from env.ALLOWED_ORIGINS (comma-separated); empty means none", () => {
     expect(corsOrigins({ ALLOWED_ORIGINS: " https://a.example , https://b.example " } as Env)).toEqual(new Set(["https://a.example", "https://b.example"]));
     expect(corsOrigins({} as Env).size).toBe(0);
+  });
+});
+
+describe("CORS preflight (JC-34 send-back)", () => {
+  const ORIGIN = "https://mock-pwa.example";
+  const pre = (origin: string | null, reqHeaders = "authorization, content-type, idempotency-key") =>
+    worker.fetch(new Request("https://gg.example.workers.dev/lb/snap", { method: "OPTIONS", headers: { ...(origin ? { origin } : {}), "access-control-request-method": "POST", "access-control-request-headers": reqHeaders } }), { ALLOWED_ORIGINS: ORIGIN } as Env);
+  it("allows every header the app's POST /lb/snap sends, including idempotency-key", async () => {
+    const r = await pre(ORIGIN);
+    expect(r.status).toBe(204);
+    expect(r.headers.get("access-control-allow-origin")).toBe(ORIGIN);
+    const allowed = (r.headers.get("access-control-allow-headers") || "").split(",").map((x) => x.trim().toLowerCase());
+    for (const h of ["authorization", "content-type", "idempotency-key"]) expect(allowed).toContain(h);
+    expect(r.headers.get("access-control-allow-methods")).toContain("POST");
+  });
+  it("the app's sync code still sends exactly headers the preflight allows", async () => {
+    const src = (await import("node:fs")).readFileSync(new URL("../../app/src/picks/sync.ts", import.meta.url), "utf8");
+    const sent = [...src.matchAll(/'(Idempotency-Key|content-type|Authorization)'|\b(Authorization|Accept):/g)].map((m) => (m[1] || m[2]).toLowerCase());
+    const allowed = ((await pre(ORIGIN)).headers.get("access-control-allow-headers") || "").split(",").map((x) => x.trim());
+    for (const h of new Set(sent)) if (h !== "accept") expect(allowed).toContain(h);
+    expect(sent).toContain("idempotency-key");
+  });
+  it("refuses a preflight from an origin that is not allowed", async () => {
+    expect((await pre("https://evil.example")).status).toBe(403);
+    expect((await pre(null)).status).toBe(403);
+  });
+});
+
+describe("wrangler.toml (JC-34 send-back nit)", () => {
+  it("D1 has only a database_id placeholder (no auto-provisioning) and there is no account_id", async () => {
+    const t = (await import("node:fs")).readFileSync(new URL("../wrangler.toml", import.meta.url), "utf8");
+    const code = t.split("\n").filter((l) => !l.trim().startsWith("#")).join("\n");
+    expect(code).toMatch(/\[\[d1_databases\]\][^\[]*database_id = "PASTE-D1-DATABASE-ID-HERE"/);
+    expect(code).not.toMatch(/account_id/);
+    expect(t).not.toMatch(/or let `wrangler deploy`\s+auto-provision/);
   });
 });

@@ -7,6 +7,14 @@
 //   release  -> upstream failed: gives back the question and the reserved cost
 //   take     -> atomic fixed-window rate counters (leaderboard unlock attempts, snapshot writes)
 // If D1 is missing or errors, callers fail CLOSED (no upstream call, no password compare).
+//
+// RELIES ON D1 batch() BEING ONE TRANSACTION. Cloudflare's D1 docs: "Batched statements are SQL transactions. If a
+// statement in the sequence fails, then an error is returned for that specific statement, and it aborts or rolls back
+// the entire sequence." Every check-and-count below (reserve, take) and every settle (finalize, release) is ONE batch()
+// call with no awaits in between, so another request can't run between the guard and the increments, and a failure
+// half-way leaves no partial count. Do NOT split these batches or replace batch() with separate run() calls; the
+// "one batch, transactional" contract is pinned by tests in test/jc34.test.ts. A single UPDATE ... RETURNING guard is
+// not used because reserve() must touch three tables (res, daily, spend) and a SQLite UPDATE changes only one.
 
 export interface D1Result<T = Record<string, unknown>> { results?: T[]; meta?: { changes?: number } }
 export interface D1PreparedStatement { bind(...v: unknown[]): D1PreparedStatement; first<T = Record<string, unknown>>(): Promise<T | null>; run(): Promise<D1Result> }

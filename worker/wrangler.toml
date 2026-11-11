@@ -19,11 +19,13 @@ binding = "GG_KV"
 # and writes its id back here.
 
 # JC-34: atomic AI caps + leaderboard limits/tokens (tables are created on first use; see src/caps.ts SCHEMA).
-# Create once with `npx wrangler d1 create gg-caps` and paste the database_id here (or let `wrangler deploy`
-# auto-provision it, wrangler >= 4.45). Free plan: 5M rows read / 100k rows written per day.
+# The OWNER creates the database once with `npx wrangler d1 create gg-caps` (free plan: 5M rows read / 100k rows
+# written per day) and pastes ONLY its database_id below. Do NOT rely on `wrangler deploy` auto-provisioning: with the
+# placeholder left in, deploy fails instead of creating a database. Never put an account_id in this file.
 [[d1_databases]]
 binding = "GG_DB"
 database_name = "gg-caps"
+database_id = "PASTE-D1-DATABASE-ID-HERE"
 
 [vars]
 MONTH_CAP_USD = "5"          # hard monthly AI budget enforced by the Worker (below the $10 prepaid)

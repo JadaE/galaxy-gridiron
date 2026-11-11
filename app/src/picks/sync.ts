@@ -20,7 +20,7 @@ export function setLbApi(u: string) { api = u; }
 /** Set (or clear) the leaderboard token. Clears the in-memory cache. */
 export function setLbToken(t: string | null) { tok = validToken(t) ? t : null; joinedAs = null; memo = null; }
 export const hasLbToken = () => !!tok;
-export const lbConfigured = () => /^https:\/\/[^/]+$/.test(api) || /^http:\/\/localhost(:\d+)?$/.test(api);
+export const lbConfigured = () => !/your[-_]/i.test(api) && (/^https:\/\/[^/]+$/.test(api) || /^http:\/\/localhost(:\d+)?$/.test(api));
 const auth = () => ({ Accept: 'application/json', Authorization: 'Bearer ' + tok });
 
 export type Unlock = { status: 'ok'; token: string } | { status: 'wrong' | 'locked' | 'offline' | 'not_setup' };
@@ -33,13 +33,18 @@ export async function unlockLeaderboard(password: string, fetcher: typeof fetch 
     return r.status === 403 ? { status: 'wrong' } : r.status === 429 ? { status: 'locked' } : r.status === 503 ? { status: 'not_setup' } : { status: 'offline' };
   } catch { return { status: 'offline' }; }
 }
-/** Bind this phone's token to her Sleeper user id (once; the server refuses a different id later). */
-export async function joinLeaderboard(me: { uid: string; un: string }, fetcher: typeof fetch = fetch): Promise<boolean> {
-  if (!tok) return false;
-  if (joinedAs === me.uid) return true;
-  const r = await fetcher(`${api}/lb/join`, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json' }, body: JSON.stringify({ uid: me.uid, un: me.un }) });
-  if (r.ok) joinedAs = me.uid;
-  return r.ok;
+export type Join = 'ok' | 'denied' | 'busy' | 'offline';
+/** Bind this phone's token to the user's Sleeper user id (once; the server refuses a different id later).
+ * 'denied' = the server refused the id (a real "not linked"); 'busy' (429) and 'offline' (network error, 5xx such as
+ * 502/503) are temporary, so callers keep the queued snapshot and retry later. */
+export async function joinLeaderboard(me: { uid: string; un: string }, fetcher: typeof fetch = fetch): Promise<Join> {
+  if (!tok) return 'denied';
+  if (joinedAs === me.uid) return 'ok';
+  let r: Response;
+  try { r = await fetcher(`${api}/lb/join`, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json' }, body: JSON.stringify({ uid: me.uid, un: me.un }) }); }
+  catch { return 'offline'; }
+  if (r.ok) { joinedAs = me.uid; return 'ok'; }
+  return r.status === 429 ? 'busy' : r.status >= 500 ? 'offline' : 'denied';
 }
 
 export type Snap = { id: string; uid: string; un: string; av?: string; season: number; week: number; picks: Record<string, string>; bf: Record<string, number>; ts: number; createdAt: number };
@@ -80,7 +85,7 @@ export async function fetchSnaps(season: number, force = false, fetcher: typeof 
   }
 }
 
-/** Snapshot of one week of her local picks. */
+/** Snapshot of one week of this phone's local picks. */
 export function snapshotFor(me: { uid: string; un: string; av?: string }, season: number, week: number, picks: PickMap): Queued {
   const p: Record<string, string> = {}, bf: Record<string, number> = {};
   for (const [g, x] of Object.entries(picks)) if (x.week === week) { p[g] = x.team; if (x.src === 'backfill' || x.src === 'paste' || x.src === 'import') bf[g] = 1; }
@@ -107,11 +112,15 @@ export async function flush(fetcher: typeof fetch = fetch): Promise<{ sent: numb
       const s = q[0];
       let r: Response;
       try {
-        if (!(await joinLeaderboard({ uid: s.uid, un: s.un }, fetcher))) { error = 'not linked to this Sleeper account'; break; }
+        const j = await joinLeaderboard({ uid: s.uid, un: s.un }, fetcher);
+        // busy/offline: keep the queued snapshot (break before it is removed) and say so; only a real refusal is "not linked"
+        if (j === 'busy') { error = 'busy (rate limited), will retry'; break; }
+        if (j === 'offline') { error = 'offline'; break; }
+        if (j !== 'ok') { error = 'not linked to this Sleeper account'; break; }
         r = await fetcher(`${api}/lb/snap`, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json', 'Idempotency-Key': s.key }, body: JSON.stringify({ uid: s.uid, un: s.un, av: s.av || undefined, season: s.season, week: s.week, picks: s.picks, bf: s.bf, ts: s.ts, key: s.key, app: APP }) });
       } catch (e: any) { error = 'offline'; break; }
       if (r.status === 429) { error = 'busy (rate limited), will retry'; break; }
-      if (!r.ok && r.status >= 500) { error = 'server error ' + r.status; break; }
+      if (!r.ok && r.status >= 500) { error = 'offline (server ' + r.status + '), will retry'; break; }
       // 4xx other than 429: the snapshot itself is bad; drop it so it can't block the queue
       if (!r.ok) error = 'rejected ' + r.status;
       else { sent++; if (memo) memo.at = 0; }
@@ -139,7 +148,7 @@ export function resolve(snaps: Snap[], games: Record<string, Game>): Person[] {
       const team = s.picks[g.id];
       if (team && team !== g.home.abbr && team !== g.away.abbr) continue;
       if (s.createdAt < g.kickoff) {
-        // on time: this snapshot is her full set for the week, so a missing game means she cleared it
+        // on time: this snapshot is the user's full set for the week, so a missing game means it was cleared
         if (team) picks[g.id] = { team, week: g.week, at: s.createdAt, src: 'live' }; else if (picks[g.id]?.src === 'live') delete picks[g.id];
         continue;
       }

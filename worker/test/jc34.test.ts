@@ -1,8 +1,8 @@
 // JC-34: atomic AI caps (D1, P1-1) and the server-side leaderboard gate (P1-2). Mock names/ids only.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { handle, sha256Hex, type Env } from "../src/index";
-import { _resetSchemaCache } from "../src/caps";
-import { _resetLbMemo, cleanRecord } from "../src/lb";
+import { _resetSchemaCache, ensureSchema, reserve, finalize, release as releaseRes, take } from "../src/caps";
+import { _resetLbMemo, cleanRecord, espnWeekQuery, hideBeforeKickoff } from "../src/lb";
 import { FakeD1 } from "./fakeD1";
 
 class MemKV {
@@ -128,6 +128,32 @@ describe("P1-1 atomic AI caps (D1)", () => {
   });
 });
 
+describe("caps rely on D1 batch() as one transaction (JC-34 send-back nit)", () => {
+  const A = { id: "r1", dev: "mockdev", day: "2026-10-21", month: "2026-10", micros: 1000, dailyLimit: 30, capMicros: 5_000_000, now: NOW.getTime() };
+  it("reserve/finalize/release/take each make exactly ONE D1 call (one batch, no reads or writes outside it)", async () => {
+    await ensureSchema(d1);
+    const gate = vi.spyOn(d1, "gate");
+    const one = async (f: () => Promise<unknown>) => { gate.mockClear(); const b = d1.batches; await f(); expect(d1.batches - b).toBe(1); expect(gate).toHaveBeenCalledTimes(1); };
+    await one(() => reserve(d1, A));
+    await one(() => finalize(d1, "r1", 500));
+    await one(() => reserve(d1, { ...A, id: "r2" }));
+    await one(() => releaseRes(d1, "r2"));
+    await one(() => take(d1, "t1", [{ k: "mock:ip", limit: 5, ttlSec: 3600 }], NOW.getTime()));
+  });
+  it("a statement failing mid-batch rolls the whole reserve back (no partial daily/spend count)", async () => {
+    await ensureSchema(d1);
+    await reserve(d1, A); // creates the rows: daily 1, spend 1000
+    const before = { n: d1.q("SELECT n FROM daily").n };
+    const prep = d1.db.prepare.bind(d1.db);
+    (d1.db as any).prepare = (sql: string) => { if (/^\s*UPDATE spend SET micros = micros \+/.test(sql)) throw new Error("mock failure"); return prep(sql); };
+    await expect(reserve(d1, { ...A, id: "r3" })).rejects.toThrow("mock failure");
+    (d1.db as any).prepare = prep;
+    expect(d1.q("SELECT n FROM daily").n).toBe(before.n); // the daily +1 earlier in the same batch was rolled back
+    expect(d1.q("SELECT micros FROM spend").micros).toBe(1000);
+    expect(d1.q("SELECT COUNT(*) AS c FROM res WHERE id = 'r3'").c).toBe(0);
+  });
+});
+
 describe("P1-2 leaderboard: server-side unlock, lockout, lb_ token, uid binding, pre-kickoff hide", () => {
   const unlock = (pw: string, ip = "10.0.0.9", at = NOW) => handle(req("POST", "/lb/unlock", { password: pw }, undefined, ip), env, at);
   async function token(ip = "10.0.0.50") { const r = await unlock(MOCK_PW, ip); expect(r.status).toBe(200); return ((await r.json()) as any).token as string; }
@@ -206,5 +232,26 @@ describe("P1-2 leaderboard: server-side unlock, lockout, lb_ token, uid binding,
   it("leaderboard routes fail closed when D1 is down", async () => {
     d1.down = true;
     expect((await unlock(MOCK_PW)).status).toBe(503);
+  });
+});
+
+describe("postseason kickoffs (JC-34 send-back nit)", () => {
+  it("weeks 1-18 use seasontype 2; 19-22 map to ESPN postseason (seasontype 3) weeks 1, 2, 3 and 5", () => {
+    expect(espnWeekQuery(1)).toEqual({ seasontype: 2, week: 1 });
+    expect(espnWeekQuery(18)).toEqual({ seasontype: 2, week: 18 });
+    expect([19, 20, 21, 22].map(espnWeekQuery)).toEqual([{ seasontype: 3, week: 1 }, { seasontype: 3, week: 2 }, { seasontype: 3, week: 3 }, { seasontype: 3, week: 5 }]);
+  });
+  it("a week-20 snapshot asks ESPN for the postseason and shows picks once that game has kicked off", async () => {
+    const urls: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (u: string) => {
+      urls.push(String(u));
+      const post = String(u).includes("seasontype=3") && String(u).includes("week=2&");
+      return new Response(JSON.stringify({ events: post ? [{ id: "4019001", date: new Date(KICK.early).toISOString() }, { id: "4019002", date: new Date(KICK.late).toISOString() }] : [] }));
+    }));
+    const snap = { id: "s", uid: "1000000000000000555", un: "mockfriend", season: 2026, week: 20, picks: { "4019001": "AAA", "4019002": "BBB" }, bf: {}, ts: 0, createdAt: 0 };
+    const [out] = await hideBeforeKickoff([snap], "1000000000000000556", NOW.getTime());
+    expect(urls).toHaveLength(1);
+    expect(urls[0]).toContain("week=2&seasontype=3&dates=2026");
+    expect(out.picks).toEqual({ "4019001": "AAA" }); // kicked off: shown; not yet: hidden
   });
 });
