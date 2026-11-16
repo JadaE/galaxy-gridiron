@@ -1,25 +1,71 @@
 // JC-34 (audit P1-2): the shared picks leaderboard goes through this Worker instead of straight to here.now Site Data.
-//  * POST /lb/unlock {password}  -> server-side, constant-time password check with ATOMIC limits in D1
-//    (5 tries per IP per hour, 20 per day for everyone; counted BEFORE the compare). Success returns an `lb_` token
-//    (256-bit; only its SHA-256 is stored). Never returns a collection name; wrong/unknown look identical.
-//  * POST /lb/join {uid, un}     -> binds the token to one Sleeper user id, once.
+//  * POST /lb/unlock {password}  -> server-side, constant-time password check with ATOMIC limits in D1, counted BEFORE the
+//    compare (JC-34 round 2, P2-2): per-IP (IPv6 by /64) backoff, 5 tries an hour, then a 1h, 2h, 4h ... 24h lockout;
+//    a SOFT global trip (200 tries a day) that raises an owner alert and, while tripped, only lets through requests that
+//    carry a paired AI-device token (X-GG-Device), which are counted per device instead. Success returns an `lb_` token
+//    (256-bit; only its SHA-256 is stored) that expires after 180 days unused and dies when LB_PASSWORD is rotated (P2-3).
+//    Never returns a collection name; wrong/unknown look identical.
+//  * POST /lb/join {uid, un, link?} -> binds the token to one Sleeper user id. The FIRST live binding wins (P2-1): another
+//    phone joins that uid only with a one-time link code made on an already-linked phone.
+//  * POST /lb/link               -> (linked phone) a one-time, 10-minute link code for adding another phone.
+//  * POST /lb/logout             -> revokes this phone's token on the server ("Forget the password").
 //  * POST /lb/snap               -> writes a snapshot AS the bound uid (any other uid in the body = 403).
 //  * GET  /lb/snaps?season=YYYY  -> every snapshot for the season, with OTHER people's picks hidden per game until that
 //    game's kickoff (kickoffs from ESPN, fetched here; never from the client). The caller's own uid is always shown.
 // The Worker is the only reader/writer of the collections (here.now owner API). Collection names, the password and the
-// owner key are Worker secrets only, never in the app or this repo.
-import { take, untake, ensureSchema, type D1Database } from "./caps";
+// owner key are Worker secrets only, never in the app or this repo. C1 (JC-34 round 2): the collection names are RANDOM
+// (made by `tools/leaderboard.py rotate new`), not derived from the password; the Worker refuses to serve if LB_LIVE or
+// LB_ARCHIVE is missing, too short to be random, or equal to the old password-derived name.
+import { take, ensureSchema, backoffTake, backoffFail, backoffUntake, raiseAlert, type D1Database } from "./caps";
 import { err, json, readJson, sha256Hex, safeEqual, randomToken, localParts, cfg, type Env } from "./index";
 
 export interface LbEnv {
   LB_PASSWORD?: string;   // secret: the shared family password (wrangler secret put LB_PASSWORD)
-  LB_LIVE?: string;       // secret: live snapshot collection name
-  LB_ARCHIVE?: string;    // secret: archive collection name (optional)
+  LB_LIVE?: string;       // secret: live snapshot collection name (random, >= 128 bits; never derived from the password)
+  LB_ARCHIVE?: string;    // secret: archive collection name (random, independent of LB_LIVE)
   LB_SITE_SLUG?: string;  // secret or var: here.now site slug
   HERENOW_API_KEY?: string; // secret: here.now owner API key (read + write the collections)
 }
 
-export const LB_LIMITS = { unlockPerIpPerHour: 5, unlockGlobalPerDay: 20, writesPerTokenPerHour: 120, readsPerTokenPerHour: 600, maxGames: 40 };
+export const LB_LIMITS = {
+  writesPerTokenPerHour: 120, readsPerTokenPerHour: 600, maxGames: 40,
+  unlockSoftGlobalPerDay: 200,      // P2-2: SOFT trip (alert + paired devices only), not a lockout for phones with a token
+  tokensPerKeyPerDay: 10,           // new lb_ tokens per IP (/64) or paired device per day
+  tokenTtlMs: 180 * 86_400_000,     // P2-3: a token unused for 180 days expires (sliding)
+  tokenSlideMs: 86_400_000,         // extend `exp` at most once a day (keeps D1 writes low)
+  linkTtlMs: 10 * 60_000, linkTriesPerTokenPerHour: 5, linkMakesPerTokenPerHour: 5, phonesPerUid: 5,
+};
+// The pre-JC-34 (v0.0.12-0.0.14) password-derived collection name, used ONLY to refuse it as LB_LIVE / LB_ARCHIVE.
+const OLD_SALT = "galaxy-gridiron/leaderboard/v1";
+const NAME_RE = /^[A-Za-z0-9_-]{32,64}$/;
+/** C1: true only if both collection names look random and neither is the old password-derived name. */
+export async function lbNamesOk(env: LbEnv): Promise<boolean> {
+  const live = env.LB_LIVE || "", arch = env.LB_ARCHIVE || "";
+  if (!NAME_RE.test(live) || !NAME_RE.test(arch) || live === arch || arch === live + "_a") return false;
+  const derived = "gg" + (await sha256Hex(OLD_SALT + "\n" + (env.LB_PASSWORD || "").trim())).slice(0, 40);
+  return ![live, arch].some((n) => n === derived || n === derived + "_a" || n.startsWith(derived));
+}
+/** P2-3: the password generation a token was minted under (short on purpose: enough to revoke on rotation, useless as a
+ * password-cracking target if the D1 table ever leaked). */
+export async function pwGen(env: LbEnv) { return (await sha256Hex("gg-lb-gen/v1\n" + (env.LB_PASSWORD || "").trim())).slice(0, 8); }
+/** P2-2 / P3-3: IPv4 as is; IPv6 bucketed by /64 (one home network or phone = one bucket). */
+export function ipBucket(ip: string): string {
+  if (!ip.includes(":")) return ip || "unknown";
+  const [head, tail = ""] = ip.toLowerCase().split("%")[0].split("::");
+  const h = head ? head.split(":") : [], t = ip.includes("::") && tail ? tail.split(":") : [];
+  const full = ip.includes("::") ? [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill("0"), ...t] : h;
+  return full.slice(0, 4).map((x) => (parseInt(x || "0", 16) || 0).toString(16)).join(":") + "::/64";
+}
+const LINK_ABC = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"; // Crockford base32: 12 chars = 60 bits
+export function normLink(c: unknown): string | null {
+  if (typeof c !== "string" || c.length > 40) return null;
+  const x = c.toUpperCase().replace(/[\s-]/g, "").replace(/O/g, "0").replace(/[IL]/g, "1");
+  return /^[0-9A-HJKMNP-TV-Z]{12}$/.test(x) ? x : null;
+}
+function newLink(): string {
+  const b = new Uint8Array(12); crypto.getRandomValues(b);
+  return [...b].map((x) => LINK_ABC[x & 31]).join("");
+}
 const HN = "https://here.now/api/v1/publishes";
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard";
 const ABBR = /^[A-Z]{2,3}$/, GID = /^\d{4,12}$/, UID = /^\d{1,24}$/;
@@ -27,12 +73,22 @@ const ABBR = /^[A-Z]{2,3}$/, GID = /^\d{4,12}$/, UID = /^\d{1,24}$/;
 export type Snap = { id: string; uid: string; un: string; av?: string; season: number; week: number; picks: Record<string, string>; bf: Record<string, number>; ts: number; createdAt: number };
 
 type Tok = { h: string; uid: string | null; un: string | null };
-async function authLb(req: Request, db: D1Database): Promise<Tok | Response> {
+const unpaired = () => err("unpaired", "Unlock the leaderboard with the family password first.", 401);
+/** P2-3: a token works only if it exists, hasn't expired, and was minted under the CURRENT password. Expiry slides
+ * (180 days from last use, written at most once a day). Expired or old-password tokens are deleted. */
+async function authLb(req: Request, env: Env, db: D1Database, now: number): Promise<Tok | Response> {
   const m = /^Bearer\s+(lb_\S{20,200})$/i.exec(req.headers.get("authorization") || "");
-  if (!m) return err("unpaired", "Unlock the leaderboard with the family password first.", 401);
+  if (!m) return unpaired();
   const h = await sha256Hex(m[1]);
-  const row: any = await db.prepare(`SELECT h, uid, un FROM lbtok WHERE h = ?1`).bind(h).first();
-  if (!row) return err("unpaired", "Unlock the leaderboard with the family password first.", 401);
+  const row: any = await db.prepare(`SELECT h, uid, un, exp, pw FROM lbtokens WHERE h = ?1`).bind(h).first();
+  if (!row) return unpaired();
+  if (!(Number(row.exp) > now) || row.pw !== (await pwGen(env))) {
+    await db.prepare(`DELETE FROM lbtokens WHERE h = ?1`).bind(h).run();
+    return unpaired();
+  }
+  if (Number(row.exp) - now < LB_LIMITS.tokenTtlMs - LB_LIMITS.tokenSlideMs) {
+    await db.prepare(`UPDATE lbtokens SET exp = ?2, seen = ?3 WHERE h = ?1`).bind(h, now + LB_LIMITS.tokenTtlMs, now).run();
+  }
   return { h, uid: row.uid ?? null, un: row.un ?? null };
 }
 
@@ -123,36 +179,95 @@ export async function hideBeforeKickoff(snaps: Snap[], me: string | null, now: n
 const notReady = () => err("not_configured", "The shared leaderboard isn't set up on the server yet.", 503);
 const dbDown = () => err("unavailable", "The leaderboard is unavailable right now. Your picks are saved on your phone.", 503);
 
+/** A paired AI-device token (same Worker, /pair) sent as X-GG-Device: its KV hash, or null. */
+async function pairedDevice(req: Request, env: Env): Promise<string | null> {
+  const d = req.headers.get("x-gg-device") || "";
+  if (!/^gg_[A-Za-z0-9_-]{20,200}$/.test(d)) return null;
+  const hash = await sha256Hex(d);
+  try { return (await env.GG_KV.get(`device:${hash}`)) ? hash : null; } catch { return null; }
+}
+
 async function unlock(req: Request, env: Env, db: D1Database, now: Date): Promise<Response> {
   if (!env.LB_PASSWORD) return notReady();
-  const p = localParts(now, cfg(env).tz);
-  const ip = req.headers.get("cf-connecting-ip") || "unknown";
-  const keys = [
-    { k: `lbu:ip:${await sha256Hex(ip)}:${p.hour}`, limit: LB_LIMITS.unlockPerIpPerHour, ttlSec: 3600 },
-    { k: `lbu:all:${p.day}`, limit: LB_LIMITS.unlockGlobalPerDay, ttlSec: 2 * 86400 },
-  ];
+  const p = localParts(now, cfg(env).tz), t = now.getTime();
   const body = await readJson(req);
   if (body instanceof Response) return body;
   if (typeof body.password !== "string" || body.password.length < 1 || body.password.length > 200) return err("bad_request", "Send {password} as a string.", 400);
+  // P2-2: a paired phone is counted on its own device key (and skips the global counter); everyone else per IP (/64)
+  const dev = await pairedDevice(req, env);
+  const key = dev ? `dev:${dev}` : `ip:${await sha256Hex("gg-lb-ip/v1\n" + ipBucket(req.headers.get("cf-connecting-ip") || "unknown"))}`;
+  const global = dev ? null : { k: `lbu:all:${p.day}`, limit: LB_LIMITS.unlockSoftGlobalPerDay, ttlSec: 2 * 86400 };
   // count the attempt BEFORE comparing: parallel guesses can't slip past the limit
-  let allowed: boolean;
-  try { allowed = await take(db, randomToken("t_"), keys, now.getTime()); } catch { return dbDown(); }
-  if (!allowed) return err("rate_limited", "Too many tries. Try again later.", 429);
-  if (!(await safeEqual(body.password.trim(), env.LB_PASSWORD.trim()))) return err("bad_code", "That password didn't work.", 403);
-  try { await untake(db, keys.map((x) => x.k)); } catch {}
+  let b;
+  try { b = await backoffTake(db, randomToken("t_"), key, global, t); } catch { return dbDown(); }
+  if (!b.ok) {
+    if (b.why === "global") { try { await raiseAlert(db, `global:${p.day}`, t); } catch {} }
+    return err("rate_limited", b.why === "global" ? "The leaderboard is getting too many password tries today. Phones already unlocked still work; try again tomorrow, or pair this phone's AI first." : "Too many tries. Try again later.", 429);
+  }
+  if (!(await safeEqual(body.password.trim(), env.LB_PASSWORD.trim()))) {
+    try { await backoffFail(db, key, t); } catch {}
+    return err("bad_code", "That password didn't work.", 403);
+  }
+  try { await backoffUntake(db, key, global?.k ?? null); } catch {}
+  // cap new tokens per IP / device per day (a right password can't mint unlimited tokens)
+  if (!(await take(db, randomToken("t_"), [{ k: `lbm:${key}:${p.day}`, limit: LB_LIMITS.tokensPerKeyPerDay, ttlSec: 2 * 86400 }], t))) return err("rate_limited", "Too many unlocks from this network today. Try again tomorrow.", 429);
   const token = randomToken("lb_");
-  await db.prepare(`INSERT INTO lbtok (h, uid, un, at) VALUES (?1, NULL, NULL, ?2)`).bind(await sha256Hex(token), now.getTime()).run();
+  await db.batch([
+    db.prepare(`DELETE FROM lbtokens WHERE exp <= ?1`).bind(t),
+    db.prepare(`INSERT INTO lbtokens (h, uid, un, at, exp, pw, seen) VALUES (?1, NULL, NULL, ?2, ?3, ?4, ?2)`).bind(await sha256Hex(token), t, t + LB_LIMITS.tokenTtlMs, await pwGen(env)),
+  ]);
   return json({ token });
 }
 
-async function join(req: Request, db: D1Database, t: Tok): Promise<Response> {
+/** P2-1: the FIRST live token to claim a uid wins. Another phone needs a one-time link code from a phone already linked
+ * to that uid. Both paths are single atomic statements/batches, so two phones racing for one uid can't both win. */
+async function join(req: Request, env: Env, db: D1Database, t: Tok, now: Date): Promise<Response> {
   const body = await readJson(req);
   if (body instanceof Response) return body;
   if (typeof body.uid !== "string" || !UID.test(body.uid) || !okUn(body.un)) return err("bad_request", "Send {uid, un}.", 400);
-  if (t.uid && t.uid !== body.uid) return err("forbidden", "This phone is already linked to a different Sleeper account. Lock and unlock again to switch.", 403);
-  const r: any = await db.prepare(`UPDATE lbtok SET uid = ?2, un = ?3 WHERE h = ?1 AND (uid IS NULL OR uid = ?2) RETURNING uid`).bind(t.h, body.uid, body.un.trim()).first();
-  if (!r || r.uid !== body.uid) return err("forbidden", "This phone is already linked to a different Sleeper account.", 403);
+  if (t.uid === body.uid) return json({ ok: true, uid: body.uid });
+  if (t.uid) return err("forbidden", "This phone is already linked to a different Sleeper account. Forget the password and unlock again to switch.", 403);
+  const ms = now.getTime(), gen = await pwGen(env), un = body.un.trim();
+  if (body.link !== undefined) {
+    const code = normLink(body.link);
+    if (!code) return err("bad_request", "That link code doesn't look right.", 400);
+    const p = localParts(now, cfg(env).tz);
+    // count the try BEFORE checking the code (60-bit codes, 10 minutes, 5 tries an hour per token)
+    if (!(await take(db, randomToken("t_"), [{ k: `lbl:${t.h}:${p.hour}`, limit: LB_LIMITS.linkTriesPerTokenPerHour, ttlSec: 3600 }], ms))) return err("rate_limited", "Too many link-code tries. Try again later.", 429);
+    const ch = await sha256Hex("gg-lb-link/v1\n" + code);
+    const r = await db.batch([
+      db.prepare(`UPDATE lbtokens SET uid = ?2, un = ?3 WHERE h = ?1 AND uid IS NULL AND EXISTS (SELECT 1 FROM lblink WHERE h = ?4 AND uid = ?2 AND exp > ?5)`).bind(t.h, body.uid, un, ch, ms),
+      db.prepare(`DELETE FROM lblink WHERE (h = ?1 AND EXISTS (SELECT 1 FROM lbtokens WHERE h = ?2 AND uid = ?3)) OR exp <= ?4`).bind(ch, t.h, body.uid, ms),
+      db.prepare(`SELECT uid FROM lbtokens WHERE h = ?1`).bind(t.h),
+    ]);
+    if ((r[2]?.results?.[0] as any)?.uid !== body.uid) return err("bad_code", "That link code didn't work. Make a new one on your other phone.", 403);
+    return json({ ok: true, uid: body.uid });
+  }
+  const r: any = await db.prepare(`UPDATE lbtokens SET uid = ?2, un = ?3 WHERE h = ?1 AND uid IS NULL
+    AND NOT EXISTS (SELECT 1 FROM lbtokens WHERE uid = ?2 AND h <> ?1 AND exp > ?4 AND pw = ?5) RETURNING uid`).bind(t.h, body.uid, un, ms, gen).first();
+  if (!r || r.uid !== body.uid) return err("uid_taken", "This Sleeper account is already linked on another phone. On that phone, tap \"Add a phone\" on the leaderboard and enter the code here.", 409);
   return json({ ok: true, uid: body.uid });
+}
+
+/** P2-1: a linked phone makes a one-time code (10 minutes) so ONE more phone can join the same uid. */
+async function link(env: Env, db: D1Database, t: Tok, now: Date): Promise<Response> {
+  if (!t.uid) return err("forbidden", "Join the leaderboard first.", 403);
+  const ms = now.getTime(), p = localParts(now, cfg(env).tz);
+  if (!(await take(db, randomToken("t_"), [{ k: `lblm:${t.h}:${p.hour}`, limit: LB_LIMITS.linkMakesPerTokenPerHour, ttlSec: 3600 }], ms))) return err("rate_limited", "Too many link codes. Try again later.", 429);
+  const n: any = await db.prepare(`SELECT COUNT(*) AS n FROM lbtokens WHERE uid = ?1 AND exp > ?2 AND pw = ?3`).bind(t.uid, ms, await pwGen(env)).first();
+  if (Number(n?.n) >= LB_LIMITS.phonesPerUid) return err("device_limit", `Already ${LB_LIMITS.phonesPerUid} phones on this account. Forget the password on an old phone first.`, 409);
+  const code = newLink();
+  await db.batch([
+    db.prepare(`DELETE FROM lblink WHERE by = ?1 OR exp <= ?2`).bind(t.h, ms),
+    db.prepare(`INSERT INTO lblink (h, uid, by, exp) VALUES (?1, ?2, ?3, ?4)`).bind(await sha256Hex("gg-lb-link/v1\n" + code), t.uid, t.h, ms + LB_LIMITS.linkTtlMs),
+  ]);
+  return json({ code: `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8)}`, expiresInSec: LB_LIMITS.linkTtlMs / 1000 });
+}
+
+/** P2-3: "Forget the password" also kills the token (and any link code it made) on the server. */
+async function logout(db: D1Database, t: Tok): Promise<Response> {
+  await db.batch([db.prepare(`DELETE FROM lblink WHERE by = ?1`).bind(t.h), db.prepare(`DELETE FROM lbtokens WHERE h = ?1`).bind(t.h)]);
+  return json({ ok: true });
 }
 
 async function snap(req: Request, env: Env, db: D1Database, t: Tok, now: Date): Promise<Response> {
@@ -167,7 +282,7 @@ async function snap(req: Request, env: Env, db: D1Database, t: Tok, now: Date): 
   const idem = typeof body.key === "string" && /^[A-Za-z0-9_-]{8,100}$/.test(body.key) ? body.key : (req.headers.get("idempotency-key") || "");
   const p = localParts(now, cfg(env).tz);
   if (!(await take(db, randomToken("t_"), [{ k: `lbw:${t.h}:${p.hour}`, limit: LB_LIMITS.writesPerTokenPerHour, ttlSec: 3600 }], now.getTime()))) return err("rate_limited", "Too many updates. Try again later.", 429);
-  if (un !== t.un) await db.prepare(`UPDATE lbtok SET un = ?2 WHERE h = ?1`).bind(t.h, un).run();
+  if (un !== t.un) await db.prepare(`UPDATE lbtokens SET un = ?2 WHERE h = ?1`).bind(t.h, un).run();
   const data = { uid: t.uid, un, ...(okAv(body.av) ? { av: body.av } : {}), season, week, picks: c.picks, bf: c.bf, ts: Number(body.ts) || now.getTime(), app: "gg" };
   const r = await fetch(`${HN}/${env.LB_SITE_SLUG}/data/${env.LB_LIVE}`, {
     method: "POST", headers: hnHeaders(env, /^[A-Za-z0-9_-]{8,100}$/.test(idem) ? { "idempotency-key": idem } : {}), body: JSON.stringify(data),
@@ -191,18 +306,21 @@ async function snaps(req: Request, env: Env, db: D1Database, t: Tok, now: Date):
 
 export async function lbRoute(req: Request, env: Env, now: Date, path: string): Promise<Response> {
   const db = env.GG_DB;
-  if (!env.LB_PASSWORD || !env.LB_LIVE || !env.LB_SITE_SLUG || !env.HERENOW_API_KEY) return notReady();
+  if (!env.LB_PASSWORD || !env.LB_LIVE || !env.LB_ARCHIVE || !env.LB_SITE_SLUG || !env.HERENOW_API_KEY) return notReady();
+  if (!(await lbNamesOk(env))) return notReady(); // C1: random collection names only (fail closed)
   if (!db) return dbDown();
   try { await ensureSchema(db); } catch { return dbDown(); }
   if (req.method === "POST" && path === "/lb/unlock") return unlock(req, env, db, now);
   const routes: Record<string, (t: Tok) => Promise<Response>> = {
-    "POST /lb/join": (t) => join(req, db, t),
+    "POST /lb/join": (t) => join(req, env, db, t, now),
+    "POST /lb/link": (t) => link(env, db, t, now),
+    "POST /lb/logout": (t) => logout(db, t),
     "POST /lb/snap": (t) => snap(req, env, db, t, now),
     "GET /lb/snaps": (t) => snaps(req, env, db, t, now),
   };
   const f = routes[`${req.method} ${path}`];
   if (!f) return err("not_found", "Not found.", 404);
   let t: Tok | Response;
-  try { t = await authLb(req, db); } catch { return dbDown(); }
+  try { t = await authLb(req, env, db, now.getTime()); } catch { return dbDown(); }
   return t instanceof Response ? t : f(t);
 }

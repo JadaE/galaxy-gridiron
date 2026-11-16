@@ -15,7 +15,8 @@ import { loadWeek, nflNow, REG_WEEKS } from '../picks/espn';
 import { loadPicks, savePicks, loadLbMe, saveLbMe, LbMe, loadPref, savePref } from '../picks/store';
 import { parseNotes, ParseResult } from '../picks/parse';
 import { TEAMS } from '../picks/teams';
-import { fetchSnaps, resolve, snapshotFor, enqueue, flush, pendingCount, Person, setLbToken, unlockLeaderboard } from '../picks/sync';
+import { fetchSnaps, resolve, snapshotFor, enqueue, flush, pendingCount, Person, setLbToken, unlockLeaderboard, logoutLeaderboard, makeLinkCode, setLinkCode, aiDeviceFor, Link } from '../picks/sync';
+import { getBase as aiBase, aiDeviceToken } from '../ai/client';
 import { validToken } from '../picks/family';
 import { getSecret, setSecret, delSecret } from '../ai/secure';
 import { restoreFromServer, onRestored, mergeRestored, weeksToShare, restoreMessage } from '../picks/restore';
@@ -130,7 +131,7 @@ export default function Picks() {
   // JC-34 (v0.0.15): the server-issued leaderboard token (never the password). null = no shared leaderboard on this device.
   const [fk, setFk] = useState<string | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
-  const [lbState, setLbState] = useState<{ loading?: boolean; err?: string; stale?: boolean; pending?: number; at?: number }>({});
+  const [lbState, setLbState] = useState<{ loading?: boolean; err?: string; stale?: boolean; pending?: number; at?: number; needLink?: boolean }>({});
   const [inclBf, setInclBf] = useState(true);
   const [sheet, setSheet] = useState<null | 'paste' | 'export' | 'import' | 'join'>((qp('psheet') as any) || null);
   const picksRef = useRef<PickMap>({});
@@ -192,8 +193,12 @@ export default function Picks() {
       const f = await flush();
       const r = await fetchSnaps(season, force);
       setPeople(resolve(r.snaps, allGames).filter(p => p.uid !== (lbMe?.uid || uid)));
-      setLbState({ stale: r.stale, pending: f.left, at: Date.now(), err: f.error && f.left ? `Couldn't sync yet (${f.error}); ${f.left} update${f.left > 1 ? 's' : ''} queued` : undefined });
-    } catch (e: any) { setLbState({ err: 'Leaderboard offline: ' + (e?.message || e), pending: await pendingCount() }); }
+      setLbState({ stale: r.stale, pending: f.left, at: Date.now(), err: f.error && f.left ? `Couldn't sync yet (${f.error}); ${f.left} update${f.left > 1 ? 's' : ''} queued` : undefined, needLink: !!f.error && /link code/.test(f.error) });
+    } catch (e: any) {
+      // JC-34 round 2 (P2-3): the token expired or was revoked on the server: forget it so the unlock card shows again
+      if (e?.message === 'locked') { await delSecret('lb_token'); setLbToken(null); setFk(null); setLbState({ pending: await pendingCount() }); return; }
+      setLbState({ err: 'Leaderboard offline: ' + (e?.message || e), pending: await pendingCount() });
+    }
   }, [season, allGames, lbMe, uid, curWeek, byWeek]);
   useEffect(() => { if ((lbMe && fk) || qp('lbsample')) loadBoard(); }, [lbMe, fk, season, Object.keys(byWeek).length]);
 
@@ -331,7 +336,7 @@ export default function Picks() {
           {view === 'board' && (
             <Board me={me} lbMe={lbMe} locked={!fk}
               onUnlock={async (pw) => {
-                const r = await unlockLeaderboard(pw);
+                const r = await unlockLeaderboard(pw, fetch, aiDeviceFor(await aiBase(), await aiDeviceToken()));
                 if (r.status !== 'ok') return r.status;
                 await setSecret('lb_token', r.token); setLbToken(r.token); setFk(r.token);
                 restoreFromServer({ season, curWeek, who: { uid, username: me.username, display: me.display_name }, load: () => loadPicks(uid, season), save: p => savePicks(uid, season, p), loadWeek: (s, w) => loadWeek(s, w) })
@@ -339,7 +344,8 @@ export default function Picks() {
                 if (!lbMe) setSheet('join');
                 return 'ok';
               }}
-              onLock={async () => { await delSecret('lb_token'); setLbToken(null); setFk(null); setPeople([]); }} people={people} byWeek={byWeek} weeks={weeks} myPicks={picks} curWeek={curWeek} width={cw} inclBf={inclBf}
+              onLock={async () => { await logoutLeaderboard(); await delSecret('lb_token'); setFk(null); setPeople([]); }}
+              onMakeLink={() => makeLinkCode()} onUseLink={c => { setLinkCode(c); loadBoard(true); }} people={people} byWeek={byWeek} weeks={weeks} myPicks={picks} curWeek={curWeek} width={cw} inclBf={inclBf}
               setInclBf={v => { setInclBf(v); savePref('inclBf', v ? '1' : '0'); }} state={lbState} onJoin={() => setSheet('join')} onReload={() => loadBoard(true)}
               onLeave={async () => { await saveLbMe(uid, null); setLbMe(null); setPeople([]); }} />
           )}
@@ -372,10 +378,10 @@ export default function Picks() {
 }
 
 // ---------------- Leaderboard ----------------
-function Board({ me, lbMe, locked, onUnlock, onLock, people, byWeek, weeks, myPicks, curWeek, width, inclBf, setInclBf, state, onJoin, onReload, onLeave }: {
+function Board({ me, lbMe, locked, onUnlock, onLock, onMakeLink, onUseLink, people, byWeek, weeks, myPicks, curWeek, width, inclBf, setInclBf, state, onJoin, onReload, onLeave }: {
   me: { user_id: string; username: string; display_name?: string; avatar?: string }; lbMe: LbMe | null; people: Person[]; byWeek: Record<number, Game[]>; weeks: number[]; myPicks: PickMap; curWeek: number; width: number;
-  inclBf: boolean; setInclBf: (v: boolean) => void; state: { loading?: boolean; err?: string; stale?: boolean; pending?: number; at?: number }; onJoin: () => void; onReload: () => void; onLeave: () => void;
-  locked: boolean; onUnlock: (pw: string) => Promise<UnlockStatus>; onLock: () => void;
+  inclBf: boolean; setInclBf: (v: boolean) => void; state: { loading?: boolean; err?: string; stale?: boolean; pending?: number; at?: number; needLink?: boolean }; onJoin: () => void; onReload: () => void; onLeave: () => void;
+  locked: boolean; onUnlock: (pw: string) => Promise<UnlockStatus>; onLock: () => void; onMakeLink: () => Promise<Link>; onUseLink: (code: string) => void;
 }) {
   const sample = people.some(p => p.sample);
   if (locked && !sample) return <UnlockCard onUnlock={onUnlock} />;
@@ -420,6 +426,8 @@ function Board({ me, lbMe, locked, onUnlock, onLock, people, byWeek, weeks, myPi
         </Pressable>
         {lbMe ? <Text style={[T.sub, { marginTop: 8 }]}>Sharing as {lbMe.un}{state.pending ? ` · ${state.pending} update${state.pending > 1 ? 's' : ''} waiting to sync` : ' · synced'}{state.stale ? ' · offline copy' : ''}. Tap (i) for how it works.</Text> : null}
         {state.err ? <Text style={{ color: C.gold, fontSize: 12, marginTop: 4 }}>{state.err}</Text> : null}
+        {state.needLink && !sample ? <LinkEntry onUse={onUseLink} /> : null}
+        {lbMe && !sample && !state.needLink ? <AddPhone onMake={onMakeLink} /> : null}
         {lbMe ? <Pressable onPress={onLeave} style={{ marginTop: 8 }}><Text style={{ color: C.dim, fontSize: 12 }}>Stop sharing on this phone</Text></Pressable> : null}
         {!sample ? <Pressable onPress={onLock} style={{ marginTop: 6 }}><Text style={{ color: C.dim, fontSize: 12 }}>Forget the leaderboard password on this phone</Text></Pressable> : null}
       </Card>
@@ -477,6 +485,34 @@ function WeekGrid({ rows, weeks, width }: { rows: { uid: string; name: string; c
  * /lb/unlock, which checks it server-side (rate limit + lockout) and returns an lb_ token. Only that token is kept (secure
  * storage); the password itself is never saved on the phone. */
 type UnlockStatus = 'ok' | 'wrong' | 'locked' | 'offline' | 'not_setup';
+
+/** JC-34 round 2 (P2-1): one Sleeper account = the first phone that joined. To add another phone, make a one-time code
+ * here and type it on the new phone. */
+function AddPhone({ onMake }: { onMake: () => Promise<Link> }) {
+  const [st, setSt] = useState<{ busy?: boolean; code?: string; msg?: string }>({});
+  const go = async () => {
+    setSt({ busy: true });
+    const r = await onMake();
+    setSt(r.status === 'ok' ? { code: r.code } : { msg: r.status === 'full' ? 'This account already has the most phones allowed.' : r.status === 'busy' ? 'Too many codes. Try again later.' : r.status === 'not_joined' ? 'Join the leaderboard on this phone first.' : r.status === 'locked' ? 'Unlock the leaderboard again first.' : "Couldn't make a code right now." });
+  };
+  if (st.code) return <Text style={[T.sub, { marginTop: 8 }]}>Link code for your other phone: <Text style={{ color: C.gold, fontWeight: '900' }}>{st.code}</Text> (works once, for 10 minutes).</Text>;
+  return (
+    <Pressable onPress={go} disabled={!!st.busy} style={{ marginTop: 8 }}>
+      <Text style={{ color: C.dim, fontSize: 12 }}>{st.busy ? 'Making a code…' : 'Add another phone to this account'}</Text>
+      {st.msg ? <Text style={{ color: C.gold, fontSize: 12 }}>{st.msg}</Text> : null}
+    </Pressable>
+  );
+}
+function LinkEntry({ onUse }: { onUse: (code: string) => void }) {
+  const [c, setC] = useState('');
+  return (
+    <View style={{ marginTop: 8 }}>
+      <Text style={T.sub}>On the phone that already shares your picks, tap "Add another phone to this account" and type the code here.</Text>
+      <TextInput value={c} onChangeText={setC} placeholder="XXXX-XXXX-XXXX" placeholderTextColor={C.dim} autoCapitalize="characters" autoCorrect={false} style={[input, { marginTop: 6 }]} onSubmitEditing={() => c.trim() && onUse(c)} />
+      <View style={{ flexDirection: 'row', marginTop: 6 }}><Btn label="Use link code" onPress={() => onUse(c)} disabled={!c.trim()} /></View>
+    </View>
+  );
+}
 function UnlockCard({ onUnlock }: { onUnlock: (pw: string) => Promise<UnlockStatus> }) {
   const [pw, setPw] = useState('');
   const [st, setSt] = useState<{ busy?: boolean; err?: string }>({});
@@ -484,7 +520,7 @@ function UnlockCard({ onUnlock }: { onUnlock: (pw: string) => Promise<UnlockStat
     setSt({ busy: true });
     const r = await onUnlock(pw);
     if (r === 'ok') { setPw(''); setSt({}); return; }
-    setSt({ err: r === 'wrong' ? "That password didn't work. Check with the app owner." : r === 'locked' ? 'Too many tries. Wait an hour and try again.' : r === 'not_setup' ? "The shared leaderboard isn't set up yet." : "Couldn't check right now. Try again when you have signal." });
+    setSt({ err: r === 'wrong' ? "That password didn't work. Check with the app owner." : r === 'locked' ? 'Too many tries. Wait a while and try again (the wait gets longer after more wrong tries).' : r === 'not_setup' ? "The shared leaderboard isn't set up yet." : "Couldn't check right now. Try again when you have signal." });
   };
   return (
     <Card title="Shared leaderboard" emoji="🔒" accent={C.gold}>

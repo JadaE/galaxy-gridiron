@@ -24,27 +24,65 @@ export const lbConfigured = () => !/your[-_]/i.test(api) && (/^https:\/\/[^/]+$/
 const auth = () => ({ Accept: 'application/json', Authorization: 'Bearer ' + tok });
 
 export type Unlock = { status: 'ok'; token: string } | { status: 'wrong' | 'locked' | 'offline' | 'not_setup' };
-/** One server-side password check. The server limits tries (per phone network and for everyone) and locks out. */
-export async function unlockLeaderboard(password: string, fetcher: typeof fetch = fetch): Promise<Unlock> {
+/** One server-side password check. The server limits tries per phone network (backing off 1h, 2h, 4h ...) and, on a busy
+ * day, only lets phones whose AI is paired to the same Worker through. `device` is that AI device token (JC-34 round 2):
+ * pass it ONLY when the AI server is this same Worker (see aiDeviceFor), so it never goes to another host. */
+export async function unlockLeaderboard(password: string, fetcher: typeof fetch = fetch, device?: string | null): Promise<Unlock> {
   if (!lbConfigured()) return { status: 'not_setup' };
   try {
-    const r = await fetcher(`${api}/lb/unlock`, { method: 'POST', headers: { 'content-type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ password: password.trim() }) });
+    const h: Record<string, string> = { 'content-type': 'application/json', Accept: 'application/json' };
+    if (device && /^gg_[A-Za-z0-9_-]{20,200}$/.test(device)) h['X-GG-Device'] = device;
+    const r = await fetcher(`${api}/lb/unlock`, { method: 'POST', headers: h, body: JSON.stringify({ password: password.trim() }) });
     if (r.ok) { const j: any = await r.json(); return validToken(j?.token) ? { status: 'ok', token: j.token } : { status: 'offline' }; }
     return r.status === 403 ? { status: 'wrong' } : r.status === 429 ? { status: 'locked' } : r.status === 503 ? { status: 'not_setup' } : { status: 'offline' };
   } catch { return { status: 'offline' }; }
 }
-export type Join = 'ok' | 'denied' | 'busy' | 'offline';
-/** Bind this phone's token to the user's Sleeper user id (once; the server refuses a different id later).
- * 'denied' = the server refused the id (a real "not linked"); 'busy' (429) and 'offline' (network error, 5xx such as
- * 502/503) are temporary, so callers keep the queued snapshot and retry later. */
+/** Is this the same Worker the AI is paired to? Only then may the AI device token go with /lb/unlock. */
+export const aiDeviceFor = (aiBase: string | null, device: string | null) =>
+  aiBase && device && aiBase.replace(/\/+$/, '').toLowerCase() === api.replace(/\/+$/, '').toLowerCase() ? device : null;
+
+export type Join = 'ok' | 'denied' | 'taken' | 'bad_link' | 'locked' | 'busy' | 'offline';
+let linkCode: string | null = null;
+/** JC-34 round 2 (P2-1): a one-time code from the phone already linked to this Sleeper account; used on the next join. */
+export function setLinkCode(c: string | null) { linkCode = c && c.trim() ? c.trim() : null; joinedAs = null; }
+/** Bind this phone's token to the user's Sleeper user id. The FIRST phone to claim an id wins; another phone needs a
+ * link code ('taken' until it has one). 'denied' = any other refusal (a real "not linked"); 'locked' (401) = the token
+ * expired or was revoked (unlock again); 'busy' (429) and 'offline' (network error, 5xx such as 502/503) are temporary,
+ * so callers keep the queued snapshot and retry later. */
 export async function joinLeaderboard(me: { uid: string; un: string }, fetcher: typeof fetch = fetch): Promise<Join> {
-  if (!tok) return 'denied';
+  if (!tok) return 'locked';
   if (joinedAs === me.uid) return 'ok';
   let r: Response;
-  try { r = await fetcher(`${api}/lb/join`, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json' }, body: JSON.stringify({ uid: me.uid, un: me.un }) }); }
+  const body: any = { uid: me.uid, un: me.un };
+  if (linkCode) body.link = linkCode;
+  try { r = await fetcher(`${api}/lb/join`, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json' }, body: JSON.stringify(body) }); }
   catch { return 'offline'; }
-  if (r.ok) { joinedAs = me.uid; return 'ok'; }
-  return r.status === 429 ? 'busy' : r.status >= 500 ? 'offline' : 'denied';
+  if (r.ok) { joinedAs = me.uid; linkCode = null; return 'ok'; }
+  if (r.status === 401) { tok = null; return 'locked'; }
+  if (r.status === 429) return 'busy';
+  if (r.status >= 500) return 'offline';
+  let code = '';
+  try { code = String(((await r.json()) as any)?.error || ''); } catch {}
+  if (code === 'uid_taken') return 'taken';
+  if (linkCode && (code === 'bad_code' || code === 'bad_request')) { linkCode = null; return 'bad_link'; }
+  return 'denied';
+}
+export type Link = { status: 'ok'; code: string } | { status: 'not_joined' | 'full' | 'busy' | 'locked' | 'offline' };
+/** On a phone already linked: a one-time, 10-minute code for adding another phone to the same Sleeper account. */
+export async function makeLinkCode(fetcher: typeof fetch = fetch): Promise<Link> {
+  if (!tok) return { status: 'locked' };
+  try {
+    const r = await fetcher(`${api}/lb/link`, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json' }, body: '{}' });
+    if (r.ok) { const j: any = await r.json(); return typeof j?.code === 'string' && /^[0-9A-Z-]{12,16}$/.test(j.code) ? { status: 'ok', code: j.code } : { status: 'offline' }; }
+    return { status: r.status === 401 ? 'locked' : r.status === 403 ? 'not_joined' : r.status === 409 ? 'full' : r.status === 429 ? 'busy' : 'offline' };
+  } catch { return { status: 'offline' }; }
+}
+/** "Forget the password": revoke this phone's token on the server too (best effort), then forget it here. */
+export async function logoutLeaderboard(fetcher: typeof fetch = fetch): Promise<void> {
+  const t = tok;
+  setLbToken(null); linkCode = null;
+  if (!t || !lbConfigured()) return;
+  try { await fetcher(`${api}/lb/logout`, { method: 'POST', headers: { Accept: 'application/json', Authorization: 'Bearer ' + t, 'content-type': 'application/json' }, body: '{}' }); } catch {}
 }
 
 export type Snap = { id: string; uid: string; un: string; av?: string; season: number; week: number; picks: Record<string, string>; bf: Record<string, number>; ts: number; createdAt: number };
@@ -116,10 +154,15 @@ export async function flush(fetcher: typeof fetch = fetch): Promise<{ sent: numb
         // busy/offline: keep the queued snapshot (break before it is removed) and say so; only a real refusal is "not linked"
         if (j === 'busy') { error = 'busy (rate limited), will retry'; break; }
         if (j === 'offline') { error = 'offline'; break; }
+        if (j === 'locked') { error = 'locked: unlock the leaderboard again'; break; }
+        if (j === 'taken') { error = 'already linked on another phone: enter a link code from that phone'; break; }
+        if (j === 'bad_link') { error = "that link code didn't work: make a new one on your other phone"; break; }
         if (j !== 'ok') { error = 'not linked to this Sleeper account'; break; }
         r = await fetcher(`${api}/lb/snap`, { method: 'POST', headers: { ...auth(), 'content-type': 'application/json', 'Idempotency-Key': s.key }, body: JSON.stringify({ uid: s.uid, un: s.un, av: s.av || undefined, season: s.season, week: s.week, picks: s.picks, bf: s.bf, ts: s.ts, key: s.key, app: APP }) });
       } catch (e: any) { error = 'offline'; break; }
       if (r.status === 429) { error = 'busy (rate limited), will retry'; break; }
+      // JC-34 round 2 (P2-3): an expired or revoked token keeps the queue (it is sent after the next unlock)
+      if (r.status === 401) { tok = null; error = 'locked: unlock the leaderboard again'; break; }
       if (!r.ok && r.status >= 500) { error = 'offline (server ' + r.status + '), will retry'; break; }
       // 4xx other than 429: the snapshot itself is bad; drop it so it can't block the queue
       if (!r.ok) error = 'rejected ' + r.status;

@@ -8,16 +8,44 @@ The two here.now Site Data collections are named from the shared password (same 
 Since v0.0.15 (JC-34) the APP no longer derives these names or talks to Site Data for picks: it unlocks through the AI
 Worker (/lb/unlock checks the password server-side with a rate limit + lockout and returns an lb_ token bound to one
 Sleeper uid), and the Worker reads/writes both collections with the owner key (LB_LIVE / LB_ARCHIVE in its config).
-`manifest --owner-only` is the cut-over that closes the collections to public read/insert once the Worker is live.
 The password comes ONLY from $GG_LEADERBOARD_PASSWORD.
+
+C1 (JC-34 round 2, Security Lead): password-derived names are an offline password oracle (anyone can derive the name for a
+guess and probe here.now, bypassing the Worker's limits). So the cut-over moves every record to NEW RANDOM collection names
+(>= 128 bits, not derived from anything) that exist only in the private names file and as the Worker secrets LB_LIVE /
+LB_ARCHIVE, then removes the old derived names from the manifest so they answer like any name that never existed.
+`manifest --owner-only` on the derived names is refused (it would keep the oracle). Derived names are used only by the
+legacy commands until `rotate close`, and by the one-time copy. Every rotate step is a DRY RUN unless given --apply.
+
+  python3 tools/leaderboard.py rotate new           # make the random names -> keys/leaderboard-names.json (600, gitignored).
+                                                    # Never printed. Refuses to overwrite an existing names file.
+  python3 tools/leaderboard.py rotate secret live|archive | npx wrangler secret put LB_LIVE|LB_ARCHIVE
+                                                    # pipes ONE name into wrangler; refuses to write it to a terminal
+  python3 tools/leaderboard.py rotate declare [--apply]
+                                                    # manifest: add the new live + archive, OWNER read/insert only; saves the
+                                                    # current manifest to the backup folder first (for rollback)
+  python3 tools/leaderboard.py rotate copy [--apply] [--backup-dir DIR]
+                                                    # backup (fails closed) of the old live + archive, then copy every record
+                                                    # into the NEW archive with its original server time in `oc` (`mv` marks
+                                                    # the source). Idempotent: re-run to catch up picks old apps still send.
+  python3 tools/leaderboard.py rotate close [--apply]
+                                                    # manifest: remove the old derived names (they then 404 like any unknown
+                                                    # name). Refuses unless every old record is already copied.
+  python3 tools/leaderboard.py rotate verify        # read-only public probe: old live, old archive and a never-used random
+                                                    # name must give the SAME status and body. Prints statuses only.
+  python3 tools/leaderboard.py rotate rollback [--apply]
+                                                    # put back the manifest saved by `declare` (old names live again)
+  python3 tools/leaderboard.py rotate copy-back [--apply] [--backup-dir DIR]
+                                                    # after a rollback: backup, then copy picks the Worker wrote to the NEW
+                                                    # live into the OLD archive (with `oc`), so nothing is lost
+  python3 tools/leaderboard.py lb-admin alerts|revoke-uid UID|revoke-all [--apply]
+                                                    # Worker D1 (P2-1/P2-2/P2-3): prints the `wrangler d1 execute` command;
+                                                    # --apply runs it (needs the owner's Cloudflare login)
 
   python3 tools/leaderboard.py keys                # write keys/family-collections.json (chmod 600) so the secret checks know the names
   python3 tools/leaderboard.py manifest [--dry-run] # declare live + archive in <publishSiteDir>/.herenow/data.json and close the
                                                     # OLD picks collection (read owner, insert none). The feedback block is untouched.
-  python3 tools/leaderboard.py manifest --owner-only [--dry-run]
-                                                    # JC-34 cut-over: live + archive become read OWNER / insert OWNER, so only
-                                                    # the Worker (owner API key) can read or write them and the old apps' password
-                                                    # probe stops working. Run ONLY after the Worker's /lb routes are deployed.
+  python3 tools/leaderboard.py manifest --owner-only   # REFUSED since JC-34 round 2 (C1): use `rotate` (below)
   python3 tools/leaderboard.py migrate [--dry-run]  # copy every OLD picks record into the archive with the owner API
                                                     # (idempotent: skips records already copied). Needs the new manifest LIVE.
   python3 tools/leaderboard.py status               # record counts: old / archive / live (owner API)
@@ -37,7 +65,7 @@ The password comes ONLY from $GG_LEADERBOARD_PASSWORD.
       The late live record is never changed; no app rule trusts phone clocks.
 Needs: app/config.local.json (siteSlug, picksCollection, publishSiteDir) and $HERENOW_API_KEY for migrate/status/backup/fix-late-week\n(fix-late-week dry run with --from-backup and --games needs no key).
 """
-import hashlib, json, os, sys, time, glob, urllib.request, urllib.error
+import hashlib, json, os, sys, time, glob, shutil, urllib.request, urllib.error
 from datetime import datetime, timezone
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -54,6 +82,26 @@ def family():
     h = hashlib.sha256((SALT + '\n' + pw.strip()).encode()).hexdigest()
     live = 'gg' + h[:40]
     return {'live': live, 'archive': live + '_a', 'hash': h}
+
+
+NAMES_FILE = os.environ.get('GG_LB_NAMES') or os.path.join(ROOT, 'keys', 'leaderboard-names.json')
+ROTATE_DIR = os.environ.get('GG_LB_ROTATE_DIR') or '/workspace/gg-private-backups/jc34'
+NAME_BYTES = 20  # 160 bits; 'gg' + 40 hex chars, the same shape here.now already accepts
+
+
+def load_names():
+    if not os.path.exists(NAMES_FILE): return None
+    if os.stat(NAMES_FILE).st_mode & 0o077: sys.exit('STOP: the names file must be private (chmod 600)')
+    n = json.load(open(NAMES_FILE))
+    if not (isinstance(n.get('live'), str) and isinstance(n.get('archive'), str)): sys.exit('STOP: names file is malformed')
+    return n
+
+
+def current():
+    """Collections the tools should read/write now: the random names once `rotate close` has run, else the legacy ones."""
+    n = load_names()
+    if n and n.get('step', 0) == 3: return {'live': n['live'], 'archive': n['archive']}  # 3 = closed (4 = rolled back)
+    return family()
 
 
 def owner(method, path, body=None, key=None):
@@ -85,6 +133,10 @@ def manifest_path():
 
 
 def cmd_manifest(dry, owner_only=False):
+    if owner_only:
+        sys.exit('STOP (C1): owner-only access on password-derived names is still a password oracle. Use `rotate` '
+                 '(new random names held only as Worker secrets) instead.')
+    if (load_names() or {}).get('step', 0) >= 1: sys.exit('STOP: the random-name rotation has started; use `rotate`')
     f, p = family(), manifest_path()
     m = json.load(open(p)); cols = m['collections']; old = CFG['picksCollection']
     if old not in cols: sys.exit('old picks collection is not in the manifest')
@@ -104,18 +156,19 @@ def cmd_manifest(dry, owner_only=False):
 
 
 def cmd_keys():
-    f = family(); p = os.path.join(ROOT, 'keys', 'family-collections.json')
+    f = current(); p = os.path.join(ROOT, 'keys', 'family-collections.json')
     with open(os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fh: json.dump({'live': f['live'], 'archive': f['archive']}, fh)
     os.chmod(p, 0o600); print('wrote keys/family-collections.json (600)')
 
 
 def cmd_status():
-    f = family()
+    f = current()
     for label, c in (('old', CFG['picksCollection']), ('archive', f['archive']), ('live', f['live'])):
         r = list_all(c); print(f'{label}: ' + ('not active (manifest not published yet)' if r is None else f'{len(r)} records'))
 
 
 def cmd_migrate(dry):
+    if (load_names() or {}).get('step', 0) >= 1: sys.exit('STOP: the random-name rotation has started; use `rotate copy`')
     f = family(); old = list_all(CFG['picksCollection'])
     if old is None: sys.exit('old collection not readable')
     arch = list_all(f['archive'])
@@ -143,24 +196,44 @@ def ms(iso):
 BACKUP_DIR = '/workspace/gg-private-backups/jc17'
 
 
-def cmd_backup(d):
-    f = family(); d = os.path.abspath(d or BACKUP_DIR)
+def private_dir(d):
+    """A folder OUTSIDE the repo, forced to 700 (also tightens an existing, looser folder)."""
+    d = os.path.abspath(d)
     if d == ROOT or d.startswith(ROOT + os.sep): sys.exit('backups must go outside the repo')
-    # Read everything FIRST: a 404 (collection not active) or any HTTP error stops the backup before a single file is
-    # written, so a backup is never silently empty or partial (list_all exits non-zero on any non-200/404 status).
+    os.makedirs(d, mode=0o700, exist_ok=True); os.chmod(d, 0o700)
+    if os.stat(d).st_mode & 0o077: sys.exit('backup FAILED: could not make the backup folder 700')
+    return d
+
+
+def write_private(p, obj):
+    with open(os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fh: json.dump(obj, fh)
+    os.chmod(p, 0o600)
+
+
+def backup_collections(d, pairs, note):
+    """Read EVERY collection first: a 404 (collection not active) or any HTTP error stops the backup before a single file
+    is written, so a backup is never silently empty or partial (list_all exits non-zero on any non-200/404 status)."""
+    if os.path.abspath(d) == ROOT or os.path.abspath(d).startswith(ROOT + os.sep): sys.exit('backups must go outside the repo')
     got = []
-    for label, c in (('old', CFG['picksCollection']), ('archive', f['archive']), ('live', f['live'])):
+    for label, c in pairs:
         r = list_all(c)
         if r is None: sys.exit(f'backup FAILED: {label} collection returned 404 (not active); nothing written')
         got.append((label, r))
-    os.makedirs(d, mode=0o700, exist_ok=True); os.chmod(d, 0o700)  # chmod also tightens an existing, looser folder
-    if os.stat(d).st_mode & 0o077: sys.exit('backup FAILED: could not make the backup folder 700')
-    stamp = time.strftime('%Y%m%d-%H%M')
+    d = private_dir(d)
+    stamp = time.strftime('%Y%m%d-%H%M%S')
     for label, r in got:
-        p = os.path.join(d, f'picks-{label}-{stamp}.json')
-        with open(os.open(p, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fh: json.dump(r, fh)
-        os.chmod(p, 0o600); print(f'{label}: {len(r)} records -> picks-{label}-{stamp}.json (600)')
-    print('cleanup: delete this folder once JC-17 is closed')
+        write_private(os.path.join(d, f'picks-{label}-{stamp}.json'), r)
+        print(f'{label}: {len(r)} records -> picks-{label}-{stamp}.json (600)')
+    print(note)
+    return dict(got)
+
+
+def cmd_backup(d):
+    d = os.path.abspath(d or BACKUP_DIR)
+    if d == ROOT or d.startswith(ROOT + os.sep): sys.exit('backups must go outside the repo')
+    f = current()
+    backup_collections(d or BACKUP_DIR, (('old', CFG['picksCollection']), ('archive', f['archive']), ('live', f['live'])),
+                       'cleanup: delete this folder once JC-17 is closed')
 
 
 def espn_week(season, week):
@@ -240,7 +313,7 @@ def cmd_fix_late_week(a):
     if rollback:
         # Rollback needs only the archive: no schedule, no ESPN call. Dry run unless --apply; exact src tag + season +
         # user + week, exactly one match; any failed delete exits non-zero.
-        f = family(); arch = list_all(f['archive'])
+        f = current(); arch = list_all(f['archive'])
         if arch is None: sys.exit('archive collection not active')
         print(f'read from server (read-only): archive {len(arch)} records')
         r = plan_rollback(arch, uid, season, week, src_id)
@@ -257,7 +330,7 @@ def cmd_fix_late_week(a):
     kick = {k: v['k'] for k, v in sched.items()}
     if bdir: live, arch, where = _latest(bdir, 'live'), _latest(bdir, 'archive'), 'backup'
     else:
-        f = family(); live, arch, where = list_all(f['live']), list_all(f['archive']), 'server (read-only)'
+        f = current(); live, arch, where = list_all(f['live']), list_all(f['archive']), 'server (read-only)'
         if live is None or arch is None: sys.exit('live/archive collection not active')
     print(f'read from {where}: live {len(live)} records, archive {len(arch)} records')
     p = plan_fix(live, arch, kick, uid, season, week, late_games)
@@ -275,12 +348,224 @@ def cmd_fix_late_week(a):
     if _arg(a, '--out'):
         with open(os.open(_arg(a, '--out'), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), 'w') as fh: json.dump(rec, fh)
     if not apply_: print('DRY RUN: nothing written. Add --apply to insert the 1 archive record.'); return
-    st, j = owner('POST', family()['archive'], rec, key=rec['src'])
+    st, j = owner('POST', current()['archive'], rec, key=rec['src'])
     if st not in (200, 201): sys.exit(f'insert failed: HTTP {st} {j.get("code", "")}')
     print(f"inserted 1 archive record {j.get('id', j.get('record', {}).get('id', '?'))}; re-run without --apply to confirm 'already applied'")
+
+
+# ---------------- C1 (JC-34 round 2): move to random collection names ----------------
+import secrets, re, subprocess
+
+STEP = {'new': 0, 'declared': 1, 'copied': 2, 'closed': 3, 'rolled_back': 4}  # stored as numbers (no strings for the secret scan)
+
+
+def new_names():
+    live, arch = 'gg' + secrets.token_hex(NAME_BYTES), 'gg' + secrets.token_hex(NAME_BYTES)
+    assert live != arch
+    return {'live': live, 'archive': arch, 'step': STEP['new']}
+
+
+def save_names(n):
+    os.makedirs(os.path.dirname(NAMES_FILE), mode=0o700, exist_ok=True)
+    write_private(NAMES_FILE, n)
+
+
+def need_names():
+    n = load_names()
+    if not n: sys.exit('STOP: no names file yet; run `rotate new` first')
+    old = family()
+    if {n['live'], n['archive']} & {old['live'], old['archive']}: sys.exit('STOP: a new name equals a password-derived name')
+    return n
+
+
+def cmd_rotate_new():
+    if os.path.exists(NAMES_FILE): sys.exit('STOP: a names file already exists; refusing to overwrite it (the Worker may use it)')
+    save_names(new_names())
+    print('wrote the new random collection names to the private names file (600). They are not printed.')
+    print('next: `rotate declare` (dry run), then `rotate declare --apply` and publish the site')
+
+
+def cmd_rotate_secret(a, out=None, isatty=None):
+    out = out or sys.stdout; isatty = isatty if isatty is not None else out.isatty()
+    which = a[2] if len(a) > 2 else ''
+    if which not in ('live', 'archive'): sys.exit('usage: rotate secret live|archive | npx wrangler secret put LB_LIVE|LB_ARCHIVE')
+    if isatty: sys.exit('STOP: refusing to print a collection name to a terminal; pipe it into `npx wrangler secret put`')
+    out.write(need_names()[which]); out.flush()
+
+
+def _manifest():
+    p = manifest_path(); return p, json.load(open(p))
+
+
+def _new_defs(cols, old):
+    base_live, base_arch = cols.get(old['live']), cols.get(old['archive'])
+    if not base_live or not base_arch: sys.exit('STOP: the current live/archive collections are not in the manifest')
+    lock = {'read': 'owner', 'insert': 'owner', 'update': 'owner', 'delete': 'owner'}
+    live = dict(json.loads(json.dumps(base_live)), access=dict(lock))
+    arch = dict(json.loads(json.dumps(base_arch)), access=dict(lock)); arch.pop('rateLimit', None)
+    arch.setdefault('fields', {})['mv'] = {'type': 'string', 'maxLength': 40}
+    arch['fields'].setdefault('oc', {'type': 'number', 'minimum': 0}); arch['fields'].setdefault('src', {'type': 'string', 'maxLength': 40})
+    return live, arch
+
+
+def cmd_rotate_declare(apply_):
+    n, old = need_names(), family(); p, m = _manifest(); cols = m['collections']
+    if n['live'] in cols and n['archive'] in cols: print('already declared (nothing to do)'); return
+    live, arch = _new_defs(cols, old)
+    cols[n['live']] = live; cols[n['archive']] = arch
+    if len(cols) > 10: sys.exit('too many collections')
+    out = json.dumps(m, indent=2) + '\n'
+    if len(out) > 64000: sys.exit('manifest too large')
+    print(f'plan: add 2 owner-only collections (new live, new archive); {len(cols)} collections after; old ones unchanged')
+    if not apply_: print('DRY RUN: nothing written. Add --apply.'); return
+    d = private_dir(ROTATE_DIR); bk = os.path.join(d, 'manifest-before-rotate.json')
+    if not os.path.exists(bk): shutil.copyfile(p, bk); os.chmod(bk, 0o600)
+    open(p, 'w').write(out)
+    n['step'] = max(n.get('step', 0), STEP['declared']); save_names(n)
+    print('manifest written (saved the previous one for rollback). Publish the site, then run `rotate copy`.')
+
+
+def plan_copy(srcs, dest, tag):
+    """Pure: records to insert into `dest` (an archive). srcs = [(prefix, records, archived)]. Each copy keeps its
+    original server time in `oc` (archive records keep their own `oc`) and is marked `mv` = prefix + source id."""
+    have = {r.get('data', {}).get('mv') for r in dest}
+    todo, skipped = [], 0
+    for prefix, recs, archived in srcs:
+        for r in recs:
+            mv = prefix + str(r['id'])
+            if len(mv) > 40: sys.exit('STOP: a record id is too long for the mv marker')
+            if mv in have: skipped += 1; continue
+            d = {k: v for k, v in r.get('data', {}).items() if k in ('uid', 'un', 'av', 'season', 'week', 'picks', 'bf', 'ts', 'app', 'src')}
+            oc = r['data'].get('oc') if archived and isinstance(r['data'].get('oc'), (int, float)) and r['data']['oc'] > 0 else ms(r['createdAt'])
+            todo.append(dict(d, oc=int(oc), mv=mv))
+    return todo, skipped
+
+
+def _copy(apply_, srcs_pairs, dest, bdir, tag, note):
+    if not apply_:
+        recs = []
+        for label, c, prefix, archived in srcs_pairs:
+            r = list_all(c)
+            if r is None: sys.exit(f'STOP: {label} collection returned 404 (not active)')
+            recs.append((prefix, r, archived))
+        dst = list_all(dest)
+        if dst is None: sys.exit('STOP: the destination archive is not active yet (publish the manifest first)')
+        todo, skipped = plan_copy(recs, dst, tag)
+        print(f"plan: {', '.join(f'{lbl} {len(r)}' for (lbl, *_), (_, r, _) in zip(srcs_pairs, recs))} records; already copied {skipped}; to copy {len(todo)}")
+        print('DRY RUN: nothing written. Add --apply (it takes a backup first).'); return None
+    got = backup_collections(bdir, [(label, c) for label, c, _, _ in srcs_pairs] + [('dest-archive', dest)], note)
+    todo, skipped = plan_copy([(prefix, got[label], archived) for label, _, prefix, archived in srcs_pairs], got['dest-archive'], tag)
+    ok = 0
+    for rec in todo:
+        st, j = owner('POST', dest, rec, key=tag + rec['mv'])
+        if st not in (200, 201): sys.exit(f'copy stopped after {ok}: HTTP {st} {j.get("code", "")}')
+        ok += 1
+    print(f'copied {ok}; already there {skipped}')
+    return ok
+
+
+def cmd_rotate_copy(apply_, bdir):
+    n, old = need_names(), family()
+    r = _copy(apply_, [('old-live', old['live'], 'l-', False), ('old-archive', old['archive'], 'a-', True)], n['archive'], bdir,
+              'rot-', 'cleanup: delete this backup folder once the rotation is verified (it holds everyone\'s picks)')
+    if r is not None:
+        n['step'] = max(n.get('step', 0), STEP['copied']); save_names(n)
+        print('next: set LB_LIVE / LB_ARCHIVE with `rotate secret`, deploy the Worker, re-run copy to catch up, then `rotate close`')
+
+
+def cmd_rotate_close(apply_):
+    n, old = need_names(), family(); p, m = _manifest(); cols = m['collections']
+    if n['live'] not in cols or n['archive'] not in cols: sys.exit('STOP: the new collections are not declared')
+    present = [k for k in ('live', 'archive') if old[k] in cols]
+    if not present: print('old names already removed (nothing to do)'); return
+    srcs = []
+    for k, prefix, archived in (('live', 'l-', False), ('archive', 'a-', True)):
+        r = list_all(old[k])
+        if r is None: sys.exit(f'STOP: old {k} is not readable; cannot confirm the copy is complete')
+        srcs.append((prefix, r, archived))
+    dst = list_all(n['archive'])
+    if dst is None: sys.exit('STOP: the new archive is not active')
+    todo, _ = plan_copy(srcs, dst, 'rot-')
+    if todo: sys.exit(f'STOP: {len(todo)} old record(s) are not copied yet; run `rotate copy --apply` first')
+    print(f'plan: remove {len(present)} old password-derived collection(s) from the manifest; every old record is copied')
+    if not apply_: print('DRY RUN: nothing written. Add --apply.'); return
+    for k in present: cols.pop(old[k])
+    open(p, 'w').write(json.dumps(m, indent=2) + '\n')
+    n['step'] = STEP['closed']; save_names(n)
+    print('manifest written. Publish the site, run `rotate verify`, then rotate the family password (LB_PASSWORD).')
+
+
+def same_404(results):
+    """Pure: results = [(status, body_text)] for old live, old archive and a never-used name (names already blanked)."""
+    return len({(s, b) for s, b in results}) == 1 and results[0][0] == 404
+
+
+def _public_get(slug, name):
+    u = f'https://{slug}.here.now/.herenow/data/{name}'
+    try:
+        with urllib.request.urlopen(urllib.request.Request(u, headers={'User-Agent': 'gg-tools'})) as r: return r.status, r.read().decode('utf-8', 'replace').replace(name, '<name>')
+    except urllib.error.HTTPError as e: return e.code, e.read().decode('utf-8', 'replace').replace(name, '<name>')
+
+
+def cmd_rotate_verify(get=None):
+    get = get or _public_get; old = family(); slug = CFG['siteSlug']
+    res = [get(slug, old['live']), get(slug, old['archive']), get(slug, 'gg' + secrets.token_hex(NAME_BYTES))]
+    for label, (st, _) in zip(('old live', 'old archive', 'never-used name'), res): print(f'{label}: HTTP {st}')
+    if not same_404(res): sys.exit('MISMATCH: the old names do not answer exactly like a never-used name yet. Do not rotate the password until they do.')
+    print('SAME: the old names answer exactly like a name that never existed')
+
+
+def cmd_rotate_rollback(apply_):
+    n = need_names(); p = manifest_path(); bk = os.path.join(ROTATE_DIR, 'manifest-before-rotate.json')
+    if not os.path.exists(bk): sys.exit('STOP: no saved manifest (rotate declare --apply never ran)')
+    print('plan: put back the manifest saved before `rotate declare` (old names live again, new ones undeclared). '
+          'Then point LB_LIVE/LB_ARCHIVE back at the old names and redeploy, and run `rotate copy-back`.')
+    if not apply_: print('DRY RUN: nothing written. Add --apply.'); return
+    shutil.copyfile(bk, p)
+    n['step'] = STEP['rolled_back']; save_names(n)
+    print('manifest restored. Publish the site.')
+
+
+def cmd_rotate_copy_back(apply_, bdir):
+    n, old = need_names(), family()
+    _copy(apply_, [('new-live', n['live'], 'r-', False)], old['archive'], bdir, 'back-',
+          'cleanup: delete this backup folder once the rollback is verified (it holds everyone\'s picks)')
+
+
+def cmd_rotate(a):
+    sub = a[1] if len(a) > 1 else ''; apply_ = '--apply' in a; bdir = _arg(a, '--backup-dir') or ROTATE_DIR
+    f = {'new': cmd_rotate_new, 'secret': lambda: cmd_rotate_secret(a), 'declare': lambda: cmd_rotate_declare(apply_),
+         'copy': lambda: cmd_rotate_copy(apply_, bdir), 'close': lambda: cmd_rotate_close(apply_), 'verify': cmd_rotate_verify,
+         'rollback': lambda: cmd_rotate_rollback(apply_), 'copy-back': lambda: cmd_rotate_copy_back(apply_, bdir)}.get(sub)
+    if not f: sys.exit('usage: rotate new|secret|declare|copy|close|verify|rollback|copy-back [--apply]')
+    f()
+
+
+# ---------------- Worker D1 admin (P2-1 reset by owner, P2-2 alerts, P2-3 revoke) ----------------
+UID_RE = re.compile(r'^\d{1,24}$')
+
+
+def lb_admin_sql(a):
+    sub = a[1] if len(a) > 1 else ''
+    if sub == 'alerts': return 'SELECT k, n, first, last FROM lbalert ORDER BY last DESC LIMIT 20'
+    if sub == 'revoke-all': return 'DELETE FROM lblink; DELETE FROM lbtokens'
+    if sub == 'revoke-uid':
+        uid = a[2] if len(a) > 2 else ''
+        if not UID_RE.match(uid): sys.exit('usage: lb-admin revoke-uid <numeric Sleeper user id>')
+        return f"DELETE FROM lblink WHERE uid = '{uid}'; DELETE FROM lbtokens WHERE uid = '{uid}'"
+    sys.exit('usage: lb-admin alerts|revoke-uid UID|revoke-all [--apply]')
+
+
+def cmd_lb_admin(a, run=None):
+    sql = lb_admin_sql(a)
+    cmd = ['npx', 'wrangler', 'd1', 'execute', 'gg-caps', '--remote', '--command', sql]
+    if '--apply' not in a and a[1] != 'alerts':
+        print('DRY RUN. In worker/, this would run:\n  ' + ' '.join(cmd[:-1]) + f' "{sql}"\nAdd --apply to run it.'); return
+    (run or subprocess.run)(cmd, cwd=os.path.join(ROOT, 'worker'), check=True)
 
 
 if __name__ == '__main__':
     a = sys.argv[1:] or ['help']; dry = '--dry-run' in a
     {'manifest': lambda: cmd_manifest(dry, '--owner-only' in a), 'migrate': lambda: cmd_migrate(dry), 'status': cmd_status, 'keys': cmd_keys,
-     'backup': lambda: cmd_backup(a[1] if len(a) > 1 else None), 'fix-late-week': lambda: cmd_fix_late_week(a)}.get(a[0], lambda: print(__doc__))()
+     'backup': lambda: cmd_backup(a[1] if len(a) > 1 else None), 'fix-late-week': lambda: cmd_fix_late_week(a),
+     'rotate': lambda: cmd_rotate(a), 'lb-admin': lambda: cmd_lb_admin(a)}.get(a[0], lambda: print(__doc__))()

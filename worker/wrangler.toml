@@ -4,8 +4,8 @@
 #   npx wrangler secret put PAIRING_CODE
 # JC-34 shared leaderboard (only when the owner moves the leaderboard behind the Worker):
 #   npx wrangler secret put LB_PASSWORD      # the family password
-#   npx wrangler secret put LB_LIVE          # live snapshot collection name
-#   npx wrangler secret put LB_ARCHIVE       # archive collection name
+#   python3 ../tools/leaderboard.py rotate secret live | npx wrangler secret put LB_LIVE        # RANDOM live name (C1)
+#   python3 ../tools/leaderboard.py rotate secret archive | npx wrangler secret put LB_ARCHIVE  # RANDOM archive name (C1)
 #   npx wrangler secret put LB_SITE_SLUG     # here.now site slug
 #   npx wrangler secret put HERENOW_API_KEY  # here.now owner API key (Site Data read + write)
 name = "galaxy-gridiron-ai"

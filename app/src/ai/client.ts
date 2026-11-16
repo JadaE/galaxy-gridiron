@@ -71,6 +71,9 @@ async function call(url: string, init: RequestInit, timeoutMs = 60000): Promise<
 }
 
 export async function getBase() { return getSecret(K_BASE); }
+/** JC-34 round 2: this phone's AI device token, sent with the leaderboard unlock ONLY when the AI server is the same
+ * Worker (sync.ts aiDeviceFor), so a paired phone can still unlock on a day strangers have tripped the global limit. */
+export async function aiDeviceToken() { return getSecret(K_TOKEN); }
 export async function isPaired() { return !!(await getSecret(K_TOKEN)) && !!(await getSecret(K_BASE)); }
 
 /** GET {base}/ health check, used to test the URL she types. */

@@ -35,7 +35,8 @@ type ErrorCode =
   | "not_configured"
   | "unavailable"
   | "not_found"
-  | "forbidden";
+  | "forbidden"
+  | "uid_taken";
 
 export const LIMITS = {
   maxBodyBytes: 64 * 1024,
@@ -385,14 +386,17 @@ function withCors(req: Request, res: Response, env: Env): Response {
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers: h });
 }
 // Every non-safelisted header the app sends must be here, or the browser preflight fails (the PWA would never share
-// picks): app/src/picks/sync.ts sends Authorization, Content-Type and Idempotency-Key (POST /lb/snap).
-export const CORS_ALLOW_HEADERS = "authorization, content-type, idempotency-key";
+// picks): app/src/picks/sync.ts sends Authorization, Content-Type, Idempotency-Key (POST /lb/snap) and X-GG-Device
+// (POST /lb/unlock from a phone whose AI is paired to this Worker; JC-34 round 2, P2-2).
+export const CORS_ALLOW_HEADERS = "authorization, content-type, idempotency-key, x-gg-device";
+// JC-34 round 2 (P3-6): only the methods this Worker serves (no route uses DELETE, PUT or PATCH).
+export const CORS_ALLOW_METHODS = "GET, POST, OPTIONS";
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const o = req.headers.get("origin");
     if (req.method === "OPTIONS") {
       if (!o || !corsOrigins(env).has(o)) return new Response(null, { status: 403 });
-      return new Response(null, { status: 204, headers: { "access-control-allow-origin": o, "access-control-allow-methods": "GET, POST, DELETE, OPTIONS", "access-control-allow-headers": CORS_ALLOW_HEADERS, "access-control-max-age": "86400", vary: "origin" } });
+      return new Response(null, { status: 204, headers: { "access-control-allow-origin": o, "access-control-allow-methods": CORS_ALLOW_METHODS, "access-control-allow-headers": CORS_ALLOW_HEADERS, "access-control-max-age": "86400", vary: "origin" } });
     }
     return withCors(req, await handle(req, env), env);
   },

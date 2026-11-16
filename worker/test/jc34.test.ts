@@ -13,7 +13,7 @@ class MemKV {
 }
 const NOW = new Date("2026-10-21T14:00:00Z");
 const MOCK_PW = "mock-family-pass-123";
-const MOCK_LIVE = "ggmocklivecollection", MOCK_ARCH = "ggmocklivecollection_a";
+const MOCK_LIVE = "ggmocklive00000000000000000000000000000001", MOCK_ARCH = "ggmockarchive000000000000000000000000000002"; // random-shaped mock names (C1)
 let kv: MemKV, d1: FakeD1, env: Env, openai: number, hnRecords: any[], hnPosts: any[], upstreamMode: "ok" | "500" | "net" | "hang";
 let release: (() => void) | null;
 
@@ -172,14 +172,14 @@ describe("P1-2 leaderboard: server-side unlock, lockout, lb_ token, uid binding,
     expect(Object.keys(JSON.parse(txt))).toEqual(["token"]);
     expect(JSON.parse(txt).token).toMatch(/^lb_[A-Za-z0-9_-]{40,}$/);
     // only a hash of the token is stored
-    expect(JSON.stringify(d1.db.prepare("SELECT * FROM lbtok").all())).not.toContain(JSON.parse(txt).token);
+    expect(JSON.stringify(d1.db.prepare("SELECT * FROM lbtokens").all())).not.toContain(JSON.parse(txt).token);
   });
 
-  it("global lockout after 20 wrong passwords a day across IPs; a correct unlock doesn't use up attempts", async () => {
+  it("20 wrong passwords across IPs no longer lock everyone out (P2-2); a correct unlock doesn't use up attempts", async () => {
     for (let i = 0; i < 4; i++) await token("10.1.0.1"); // 4 good unlocks from one IP: still allowed
     expect((await unlock(MOCK_PW, "10.1.0.1")).status).toBe(200);
     await Promise.all(Array.from({ length: 20 }, (_, i) => unlock("nope", `10.2.0.${i}`)));
-    expect((await unlock(MOCK_PW, "10.3.0.1")).status).toBe(429);
+    expect((await unlock(MOCK_PW, "10.3.0.1")).status).toBe(200);
   });
 
   it("wrong and malformed answers never reveal anything; not configured -> 503", async () => {
