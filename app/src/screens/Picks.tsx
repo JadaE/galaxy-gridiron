@@ -15,7 +15,7 @@ import { loadWeek, nflNow, REG_WEEKS } from '../picks/espn';
 import { loadPicks, savePicks, loadLbMe, saveLbMe, LbMe, loadPref, savePref } from '../picks/store';
 import { parseNotes, ParseResult } from '../picks/parse';
 import { TEAMS } from '../picks/teams';
-import { fetchSnaps, resolve, snapshotFor, enqueue, flush, pendingCount, Person, setLbToken, unlockLeaderboard, logoutLeaderboard, makeLinkCode, setLinkCode, aiDeviceFor, Link } from '../picks/sync';
+import { fetchSnaps, resolve, snapshotFor, enqueue, flush, pendingCount, Person, setLbToken, unlockLeaderboard, logoutLeaderboard, makeLinkCode, setLinkCode, aiDeviceFor, Link, lockedFlush } from '../picks/sync';
 import { getBase as aiBase, aiDeviceToken } from '../ai/client';
 import { validToken } from '../picks/family';
 import { getSecret, setSecret, delSecret } from '../ai/secure';
@@ -185,21 +185,25 @@ export default function Picks() {
 
   const allGames = useMemo(() => { const m: Record<string, Game> = {}; Object.values(byWeek).flat().forEach(g => (m[g.id] = g)); return m; }, [byWeek]);
 
+  // JC-34 round 2 (P2-3): the token expired or was revoked on the server: forget it so the unlock card shows again.
+  // The queued snapshots stay and are sent after the next unlock.
+  const relock = useCallback(async () => { await delSecret('lb_token'); setLbToken(null); setFk(null); setLbState({ pending: await pendingCount() }); }, []);
   const loadBoard = useCallback(async (force = false) => {
     if (!season) return;
     if (qp('lbsample')) { setPeople(samplePeople(byWeek, curWeek - 1)); setLbState({ at: Date.now() }); return; }
     setLbState(s => ({ ...s, loading: true }));
     try {
       const f = await flush();
+      if (lockedFlush(f)) { await relock(); return; }
       const r = await fetchSnaps(season, force);
       setPeople(resolve(r.snaps, allGames).filter(p => p.uid !== (lbMe?.uid || uid)));
       setLbState({ stale: r.stale, pending: f.left, at: Date.now(), err: f.error && f.left ? `Couldn't sync yet (${f.error}); ${f.left} update${f.left > 1 ? 's' : ''} queued` : undefined, needLink: !!f.error && /link code/.test(f.error) });
     } catch (e: any) {
       // JC-34 round 2 (P2-3): the token expired or was revoked on the server: forget it so the unlock card shows again
-      if (e?.message === 'locked') { await delSecret('lb_token'); setLbToken(null); setFk(null); setLbState({ pending: await pendingCount() }); return; }
+      if (e?.message === 'locked') { await relock(); return; }
       setLbState({ err: 'Leaderboard offline: ' + (e?.message || e), pending: await pendingCount() });
     }
-  }, [season, allGames, lbMe, uid, curWeek, byWeek]);
+  }, [season, allGames, lbMe, uid, curWeek, byWeek, relock]);
   useEffect(() => { if ((lbMe && fk) || qp('lbsample')) loadBoard(); }, [lbMe, fk, season, Object.keys(byWeek).length]);
 
   const flash = (t: string) => { setToast(t); setTimeout(() => setToast(x => (x === t ? '' : x)), 2600); };
@@ -209,9 +213,12 @@ export default function Picks() {
     if (lbMe && fk) {
       for (const w of new Set(weeks)) await enqueue(snapshotFor(lbMe, season, w, next));
       clearTimeout(flushT.current);
-      flushT.current = setTimeout(() => flush().then(r => setLbState(s => ({ ...s, pending: r.left, err: r.error && r.left ? `Saved on your phone; sharing when back online (${r.left} queued)` : undefined }))), 2500);
+      flushT.current = setTimeout(() => flush().then(r => {
+        if (lockedFlush(r)) { relock(); return; } // 401: lock the board, keep the queue (same as loadBoard)
+        setLbState(s => ({ ...s, pending: r.left, err: r.error && r.left ? `Saved on your phone; sharing when back online (${r.left} queued)` : undefined }));
+      }), 2500);
     }
-  }, [uid, season, lbMe, fk]);
+  }, [uid, season, lbMe, fk, relock]);
 
   // picks imported from Settings › Picks data: share those weeks once the leaderboard identity is known
   useEffect(() => { (async () => {

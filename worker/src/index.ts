@@ -1,7 +1,7 @@
 import { PRICES, costUsd, readUsage, round6 } from "./pricing";
 import { SYSTEM_PROMPT } from "./prompt";
-import { type D1Database, reserve, finalize, release, usage as capUsage, toMicros, fromMicros } from "./caps";
-import { lbRoute, type LbEnv } from "./lb";
+import { type D1Database, reserve, finalize, release, usage as capUsage, toMicros, fromMicros, backoffTake, backoffFail, backoffUntake, raiseAlert } from "./caps";
+import { lbRoute, ipBucket, type LbEnv } from "./lb";
 
 export interface Env extends LbEnv {
   GG_KV: KVNamespace;
@@ -45,8 +45,9 @@ export const LIMITS = {
   maxTotalMessageChars: 16000,
   maxContextChars: 16000, // ~4k tokens of league JSON
   maxDeviceNameChars: 40,
-  pairFailsPerIpPerHour: 5,
-  pairFailsGlobalPerDay: 20,
+  // JC-34 round 2: /pair uses the same per-network backoff as /lb/unlock (5 tries an hour per IP or IPv6 /64, then a
+  // 1h, 2h, 4h ... 24h lockout) and a SOFT global trip (owner alert) instead of the old 20/day lockout for everyone.
+  pairSoftGlobalPerDay: 200,
 };
 
 export const TIER_SETTINGS: Record<Tier, { defaultModel: string; maxOutputTokens: number; effort: string }> = {
@@ -173,14 +174,8 @@ async function pair(req: Request, env: Env, now: Date): Promise<Response> {
   if (!env.PAIRING_CODE) return err("not_configured", "Pairing code isn't set on the server yet.", 503);
   const c = cfg(env);
   const p = localParts(now, c.tz);
-  const ip = req.headers.get("cf-connecting-ip") || "unknown";
-  const ipKey = `pairfail:ip:${await sha256Hex(ip)}:${p.hour}`;
-  const globalKey = `pairfail:global:${p.day}`;
-  const [ipFails, globalFails] = await Promise.all([kvNum(env, ipKey), kvNum(env, globalKey)]);
-  if (ipFails >= LIMITS.pairFailsPerIpPerHour || globalFails >= LIMITS.pairFailsGlobalPerDay) {
-    return err("rate_limited", "Too many wrong codes. Try again later.", 429);
-  }
-
+  const db = env.GG_DB;
+  if (!db) return err("unavailable", "Pairing is unavailable right now. Try again later.", 503);
   const body = await readJson(req);
   if (body instanceof Response) return body;
   const code = body.code;
@@ -190,13 +185,20 @@ async function pair(req: Request, env: Env, now: Date): Promise<Response> {
   }
   const deviceName = rawName.replace(/[\u0000-\u001f\u007f]/g, "").trim().slice(0, LIMITS.maxDeviceNameChars) || "device";
 
+  // count the try BEFORE comparing (one D1 batch), per IP (/64) with backoff, plus the soft global counter
+  const key = `pair:${await sha256Hex("gg-pair-ip/v1\n" + ipBucket(req.headers.get("cf-connecting-ip") || "unknown"))}`;
+  const global = { k: `pair:all:${p.day}`, limit: LIMITS.pairSoftGlobalPerDay, ttlSec: 2 * 86400 };
+  let b;
+  try { b = await backoffTake(db, randomToken("t_"), key, global, now.getTime()); } catch { return err("unavailable", "Pairing is unavailable right now. Try again later.", 503); }
+  if (!b.ok) {
+    if (b.why === "global") { try { await raiseAlert(db, `pair-global:${p.day}`, now.getTime()); } catch {} }
+    return err("rate_limited", "Too many wrong codes. Try again later.", 429);
+  }
   if (!(await safeEqual(code.trim(), env.PAIRING_CODE.trim()))) {
-    await Promise.all([
-      env.GG_KV.put(ipKey, String(ipFails + 1), { expirationTtl: 3600 }),
-      env.GG_KV.put(globalKey, String(globalFails + 1), { expirationTtl: 2 * 86400 }),
-    ]);
+    try { await backoffFail(db, key, now.getTime()); } catch {}
     return err("bad_code", "That pairing code didn't match.", 403);
   }
+  try { await backoffUntake(db, key, global.k); } catch {}
 
   const existing = await env.GG_KV.list({ prefix: "device:" });
   if (existing.keys.length >= c.maxDevices) {

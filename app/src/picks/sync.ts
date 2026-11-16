@@ -138,6 +138,8 @@ export async function enqueue(s: Queued) {
   q.push(s); await setQueue(q);
 }
 export async function pendingCount() { return (await getQueue()).length; }
+/** True when a flush stopped because the token expired or was revoked (401): the caller must lock the board. */
+export const lockedFlush = (r: { error?: string }) => !!r.error && r.error.startsWith('locked');
 let flushing = false;
 /** Send queued snapshots. Stops at the first network/rate-limit failure and keeps the rest for later. */
 export async function flush(fetcher: typeof fetch = fetch): Promise<{ sent: number; left: number; error?: string }> {

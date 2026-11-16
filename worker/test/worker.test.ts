@@ -103,10 +103,10 @@ describe("POST /pair", () => {
     const ok = await handle(req("POST", "/pair", { code: "galaxy-42-tacos", deviceName: "x" }, undefined, "5.6.7.8"), env, NOW);
     expect(ok.status).toBe(200);
   });
-  it("global lockout after 20 failures/day across IPs", async () => {
+  it("JC-34 round 2: 20 failures/day across IPs no longer lock pairing for everyone", async () => {
     for (let i = 0; i < 20; i++) await handle(req("POST", "/pair", { code: "bad", deviceName: "x" }, undefined, `9.9.9.${i}`), env, NOW);
     const r = await handle(req("POST", "/pair", { code: "galaxy-42-tacos", deviceName: "x" }, undefined, "8.8.8.8"), env, NOW);
-    expect(r.status).toBe(429);
+    expect(r.status).toBe(200);
   });
   it("bad_request on malformed body, device_limit after MAX_DEVICES", async () => {
     expect((await handle(req("POST", "/pair", "{not json"), env, NOW)).status).toBe(400);

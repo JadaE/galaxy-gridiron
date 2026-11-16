@@ -235,13 +235,18 @@ async function join(req: Request, env: Env, db: D1Database, t: Tok, now: Date): 
     // count the try BEFORE checking the code (60-bit codes, 10 minutes, 5 tries an hour per token)
     if (!(await take(db, randomToken("t_"), [{ k: `lbl:${t.h}:${p.hour}`, limit: LB_LIMITS.linkTriesPerTokenPerHour, ttlSec: 3600 }], ms))) return err("rate_limited", "Too many link-code tries. Try again later.", 429);
     const ch = await sha256Hex("gg-lb-link/v1\n" + code);
+    // ONE batch: the phone cap is checked in the same statement that binds (several codes made while the uid had room
+    // can't push it past phonesPerUid when redeemed together); an unused code survives a "full" refusal.
     const r = await db.batch([
-      db.prepare(`UPDATE lbtokens SET uid = ?2, un = ?3 WHERE h = ?1 AND uid IS NULL AND EXISTS (SELECT 1 FROM lblink WHERE h = ?4 AND uid = ?2 AND exp > ?5)`).bind(t.h, body.uid, un, ch, ms),
+      db.prepare(`UPDATE lbtokens SET uid = ?2, un = ?3 WHERE h = ?1 AND uid IS NULL AND EXISTS (SELECT 1 FROM lblink WHERE h = ?4 AND uid = ?2 AND exp > ?5)
+        AND (SELECT COUNT(*) FROM lbtokens WHERE uid = ?2 AND exp > ?5 AND pw = ?6) < ?7`).bind(t.h, body.uid, un, ch, ms, gen, LB_LIMITS.phonesPerUid),
       db.prepare(`DELETE FROM lblink WHERE (h = ?1 AND EXISTS (SELECT 1 FROM lbtokens WHERE h = ?2 AND uid = ?3)) OR exp <= ?4`).bind(ch, t.h, body.uid, ms),
-      db.prepare(`SELECT uid FROM lbtokens WHERE h = ?1`).bind(t.h),
+      db.prepare(`SELECT (SELECT uid FROM lbtokens WHERE h = ?1) AS uid, EXISTS (SELECT 1 FROM lblink WHERE h = ?2 AND uid = ?3 AND exp > ?4) AS live`).bind(t.h, ch, body.uid, ms),
     ]);
-    if ((r[2]?.results?.[0] as any)?.uid !== body.uid) return err("bad_code", "That link code didn't work. Make a new one on your other phone.", 403);
-    return json({ ok: true, uid: body.uid });
+    const row: any = r[2]?.results?.[0];
+    if (row?.uid === body.uid) return json({ ok: true, uid: body.uid });
+    if (Number(row?.live) === 1) return err("device_limit", `Already ${LB_LIMITS.phonesPerUid} phones on this account. Forget the password on an old phone first.`, 409);
+    return err("bad_code", "That link code didn't work. Make a new one on your other phone.", 403);
   }
   const r: any = await db.prepare(`UPDATE lbtokens SET uid = ?2, un = ?3 WHERE h = ?1 AND uid IS NULL
     AND NOT EXISTS (SELECT 1 FROM lbtokens WHERE uid = ?2 AND h <> ?1 AND exp > ?4 AND pw = ?5) RETURNING uid`).bind(t.h, body.uid, un, ms, gen).first();

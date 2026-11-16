@@ -16,9 +16,10 @@ Errors (`{ error, message }`):
 |---|---|---|
 | 400 | `bad_request` | body not JSON / fields not strings |
 | 403 | `bad_code` | wrong code (counts toward rate limit) |
-| 429 | `rate_limited` | ≥5 wrong codes from one IP in the current hour, or ≥20 wrong codes total today |
+| 429 | `rate_limited` | JC-34 round 2: each try is counted in D1 before the compare. 5 tries an hour per IP (IPv6 by /64); using them up locks that network for 1h, then 2h, 4h ... up to 24h. A SOFT global counter (200 tries a day) returns 429 past it and writes an owner alert (`lb-admin alerts`); phones already paired are never affected |
 | 403 | `device_limit` | already `MAX_DEVICES` (default 5) paired devices |
 | 503 | `not_configured` | `PAIRING_CODE` secret not set yet |
+| 503 | `unavailable` | D1 missing or erroring (fails closed: the code is not compared) |
 
 ## POST /chat
 Headers: `Authorization: Bearer <deviceToken>`
@@ -95,7 +96,7 @@ All need the leaderboard secrets (`LB_PASSWORD`, `LB_LIVE`, `LB_ARCHIVE`, `LB_SI
   - Wrong = 403 `bad_code` (one message for every wrong answer). A correct unlock gives its try back. At most 10 new tokens per IP/device per day.
   - Only SHA-256(token) is stored (`lbtokens`), with an expiry (180 days, sliding on use) and an 8-hex-char tag of the current password; a token minted under an older password is rejected (401), so rotating `LB_PASSWORD` revokes every token (P2-3).
 - `POST /lb/join {uid, un, link?}` (Bearer lb token) -> binds the token to one Sleeper user id (P2-1). The FIRST live token to claim a uid wins; another token gets 409 `uid_taken` unless it sends a valid `link` code made for that uid (wrong/used/expired code = 403 `bad_code`; 5 code tries per token per hour). A token already bound to another uid = 403 `forbidden`.
-- `POST /lb/link` (Bearer, joined) -> `{code: "XXXX-XXXX-XXXX", expiresInSec: 600}`: one-time, 10-minute, 60-bit code for adding ONE more phone to the same uid (only its hash is stored). Max 5 live phones per uid (409 `device_limit`); 5 codes per token per hour.
+- `POST /lb/link` (Bearer, joined) -> `{code: "XXXX-XXXX-XXXX", expiresInSec: 600}`: one-time, 10-minute, 60-bit code for adding ONE more phone to the same uid (only its hash is stored). Max 5 live phones per uid (409 `device_limit`), checked when a code is made AND atomically when it is redeemed (an unused code survives a "full" refusal); 5 codes per token per hour.
 - `POST /lb/logout` (Bearer) -> `{ok: true}`: deletes this token (and its link codes) on the server.
 - Expired, revoked or old-password tokens get 401 `unpaired` on every route. Owner reset: `python3 tools/leaderboard.py lb-admin revoke-uid UID | revoke-all [--apply]`.
 - `POST /lb/snap {season, week, picks, bf, ts, un?, av?, key?}` (Bearer) -> 201. Written to the live collection as the bound uid only; a body naming another uid = 403; not joined = 403. 120 writes per token per hour.

@@ -1,6 +1,7 @@
 // Run: npx tsx --require ./tests/rn-shim.cjs tests/jc34r2.test.ts  (JC-34 round 2: mocked store and network only; mock ids)
 import assert from 'node:assert/strict';
-import { setKv, snapshotFor, enqueue, flush, pendingCount, setLbToken, hasLbToken, unlockLeaderboard, setLbApi, joinLeaderboard, setLinkCode, makeLinkCode, logoutLeaderboard, aiDeviceFor } from '../src/picks/sync';
+import fs from 'fs';
+import { lockedFlush, setKv, snapshotFor, enqueue, flush, pendingCount, setLbToken, hasLbToken, unlockLeaderboard, setLbApi, joinLeaderboard, setLinkCode, makeLinkCode, logoutLeaderboard, aiDeviceFor } from '../src/picks/sync';
 let pass = 0, fail = 0;
 const t = async (n: string, f: () => any) => { try { await f(); pass++; console.log('  ✓', n); } catch (e: any) { fail++; console.log('  ✗', n, '\n     ', e.message); } };
 const mem: Record<string, string> = {};
@@ -64,6 +65,16 @@ const res = (status: number, body: any = {}) => new Response(JSON.stringify(body
     assert.equal(aiDeviceFor(null, DEV), null);
     await unlockLeaderboard('mock-pass', (async (_u: string, init: any) => { seen.push(init.headers); return res(200, { token: TOK }); }) as any, null);
     assert.equal(seen[1]['X-GG-Device'], undefined);
+  });
+  await t('P2-3: every flush path in the Picks screen (incl. the delayed flush after a local pick) locks the board on a 401', async () => {
+    assert.equal(lockedFlush({ error: 'locked: unlock the leaderboard again' }), true);
+    assert.equal(lockedFlush({ error: 'offline' }), false); assert.equal(lockedFlush({}), false);
+    const src = fs.readFileSync(__dirname + '/../src/screens/Picks.tsx', 'utf8');
+    const delayed = src.slice(src.indexOf('flushT.current = setTimeout('), src.indexOf('2500);', src.indexOf('flushT.current = setTimeout(')));
+    assert.match(delayed, /lockedFlush\(r\)\)\s*\{\s*relock\(\)/, 'the delayed flush relocks on 401');
+    assert.match(src, /const f = await flush\(\);\s*if \(lockedFlush\(f\)\) \{ await relock\(\)/, 'loadBoard relocks on 401');
+    const relock = src.slice(src.indexOf('const relock = useCallback('), src.indexOf('const loadBoard'));
+    assert.ok(/delSecret\('lb_token'\)/.test(relock) && /setFk\(null\)/.test(relock) && !/setQueue|lb:queue/.test(relock), 'relock forgets the token and keeps the queue');
   });
   console.log(`${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);

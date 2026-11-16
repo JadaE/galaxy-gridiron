@@ -1,7 +1,7 @@
 // JC-34 round 2: Security Lead conditions C1, P2-1, P2-2, P2-3, P3-6 (security-lead/reviews/gg-jc34.md). Mock names/ids only.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { handle, sha256Hex, CORS_ALLOW_METHODS, type Env } from "../src/index";
+import { handle, sha256Hex, CORS_ALLOW_METHODS, LIMITS, type Env } from "../src/index";
 import default_ from "../src/index";
 import { _resetSchemaCache } from "../src/caps";
 import { _resetLbMemo, LB_LIMITS, ipBucket, lbNamesOk, normLink } from "../src/lb";
@@ -19,7 +19,7 @@ const at = (ms: number) => new Date(NOW.getTime() + ms);
 const MOCK_PW = "mock-family-pass-123";
 const MOCK_LIVE = "ggmocklive00000000000000000000000000000001", MOCK_ARCH = "ggmockarchive000000000000000000000000000002";
 let kv: MemKV, d1: FakeD1, env: Env, hnCalls: number;
-const LIM0 = { ...LB_LIMITS };
+const LIM0 = { ...LB_LIMITS }, PLIM0 = { ...LIMITS };
 
 function req(method: string, path: string, body?: unknown, o: { token?: string; ip?: string; device?: string } = {}) {
   const h: Record<string, string> = { "content-type": "application/json", "cf-connecting-ip": o.ip ?? "10.0.0.1" };
@@ -42,7 +42,7 @@ async function pairDevice(name = "Mock Phone") {
 
 beforeEach(() => {
   kv = new MemKV(); d1 = new FakeD1(); _resetSchemaCache(); _resetLbMemo(); hnCalls = 0;
-  Object.assign(LB_LIMITS, LIM0);
+  Object.assign(LB_LIMITS, LIM0); Object.assign(LIMITS, PLIM0);
   env = {
     GG_KV: kv as unknown as KVNamespace, GG_DB: d1, OPENAI_API_KEY: "test-not-a-real-key", PAIRING_CODE: "mock-pair-code",
     LB_PASSWORD: MOCK_PW, LB_LIVE: MOCK_LIVE, LB_ARCHIVE: MOCK_ARCH, LB_SITE_SLUG: "mock-site-0000", HERENOW_API_KEY: "test-not-a-real-hn-key",
@@ -54,7 +54,7 @@ beforeEach(() => {
     throw new Error("unexpected fetch " + url);
   }));
 });
-afterEach(() => { vi.unstubAllGlobals(); Object.assign(LB_LIMITS, LIM0); });
+afterEach(() => { vi.unstubAllGlobals(); Object.assign(LB_LIMITS, LIM0); Object.assign(LIMITS, PLIM0); });
 
 describe("C1: random collection names only (never password-derived)", () => {
   it("refuses to serve (503, no here.now call) when LB_LIVE or LB_ARCHIVE is the old password-derived name", async () => {
@@ -122,6 +122,18 @@ describe("P2-1: first uid binding wins; more phones only with a link code", () =
     for (let i = 0; i < 5; i++) expect((await join(b, "1001", { link: "0000-0000-000" + i })).status).toBe(403);
     expect((await join(b, "1001", { link: code })).status).toBe(429);
   });
+  it("the 5-phone cap is also enforced when codes are REDEEMED (atomically): two codes made at 4 phones -> only one more joins", async () => {
+    const a = await token(); await join(a, "1001");
+    const b = await token("10.0.3.1"); { const { code } = await mkLink(a); expect((await join(b, "1001", { link: code })).status).toBe(200); }
+    for (let i = 0; i < 2; i++) { const t = await token(`10.0.3.${i + 2}`); const { code } = await mkLink(a); expect((await join(t, "1001", { link: code })).status).toBe(200); }
+    // 4 phones now: two linked phones each make a code while there's still room for one more
+    const c1 = (await mkLink(a)).code, c2 = (await mkLink(b)).code;
+    expect(c1 && c2).toBeTruthy();
+    const x = await token("10.0.4.1"), y = await token("10.0.4.2");
+    const st = (await Promise.all([join(x, "1001", { link: c1 }), join(y, "1001", { link: c2 })])).map((r) => r.status).sort();
+    expect(st).toEqual([200, 409]);
+    expect(d1.q("SELECT COUNT(*) AS n FROM lbtokens WHERE uid = '1001'").n).toBe(5);
+  });
   it("at most 5 live phones per uid", async () => {
     const a = await token(); await join(a, "1001");
     for (let i = 0; i < 4; i++) { const t = await token(`10.0.2.${i}`); const { code } = await mkLink(a); expect((await join(t, "1001", { link: code })).status).toBe(200); }
@@ -187,6 +199,35 @@ describe("P2-2: per-IP backoff + soft global trip + paired-device bypass (no glo
   it("a correct password can't mint unlimited tokens: 10 per IP per day", async () => {
     for (let i = 0; i < 10; i++) await token("10.0.0.77");
     expect((await unlock(MOCK_PW, "10.0.0.77")).status).toBe(429);
+  });
+});
+
+describe("/pair: per-network backoff + soft global trip (Security Lead extra; replaces the 20/day lockout)", () => {
+  const pr = (code: string, ip: string, when = NOW) => handle(req("POST", "/pair", { code, deviceName: "Mock" }, { ip }), env, when);
+  it("one IP: 5 wrong codes -> locked 1h, then 2h (doubling); other IPs unaffected", async () => {
+    for (let i = 0; i < 5; i++) expect((await pr("nope", "10.0.0.9")).status).toBe(403);
+    expect((await pr("mock-pair-code", "10.0.0.9", at(30 * 60_000))).status).toBe(429);
+    expect((await pr("mock-pair-code", "10.0.0.10")).status).toBe(200);
+    for (let i = 0; i < 5; i++) expect((await pr("nope", "10.0.0.9", at(H + 1000))).status).toBe(403);
+    expect((await pr("mock-pair-code", "10.0.0.9", at(2 * H + 2000))).status).toBe(429);
+    expect((await pr("mock-pair-code", "10.0.0.9", at(3 * H + 2000))).status).toBe(200);
+  });
+  it("30 parallel wrong codes from one IP count only 5; IPv6 shares a /64", async () => {
+    const st = (await Promise.all(Array.from({ length: 30 }, () => pr("nope", "2001:db8:5:6::1")))).map((r) => r.status);
+    expect(st.filter((s) => s === 403)).toHaveLength(5);
+    expect((await pr("mock-pair-code", "2001:db8:5:6::99")).status).toBe(429);
+  });
+  it("past the soft global ceiling: 429 plus an owner alert; the next day pairing works again", async () => {
+    LIMITS.pairSoftGlobalPerDay = 12;
+    await Promise.all(Array.from({ length: 3 }, (_, ip) => Promise.all(Array.from({ length: 5 }, () => pr("nope", `10.6.1.${ip}`)))));
+    expect((await pr("mock-pair-code", "10.7.1.1")).status).toBe(429);
+    expect(d1.q("SELECT n FROM lbalert WHERE k = 'pair-global:2026-10-21'").n).toBeGreaterThanOrEqual(1);
+    expect((await pr("mock-pair-code", "10.7.1.1", at(D))).status).toBe(200);
+  });
+  it("D1 down -> 503 and the code is never compared", async () => {
+    d1.down = true;
+    expect((await pr("mock-pair-code", "10.0.0.1")).status).toBe(503);
+    expect(kv.store.size).toBe(0);
   });
 });
 

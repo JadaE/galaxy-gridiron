@@ -34,10 +34,14 @@ legacy commands until `rotate close`, and by the one-time copy. Every rotate ste
   python3 tools/leaderboard.py rotate verify        # read-only public probe: old live, old archive and a never-used random
                                                     # name must give the SAME status and body. Prints statuses only.
   python3 tools/leaderboard.py rotate rollback [--apply]
-                                                    # put back the manifest saved by `declare` (old names live again)
+                                                    # phase 1: old names declared again, new ones STILL declared; then publish,
+                                                    # point LB_LIVE/LB_ARCHIVE back at the old names, redeploy, and copy-back
   python3 tools/leaderboard.py rotate copy-back [--apply] [--backup-dir DIR]
-                                                    # after a rollback: backup, then copy picks the Worker wrote to the NEW
+                                                    # (between the phases) backup, then copy picks the Worker wrote to the NEW
                                                     # live into the OLD archive (with `oc`), so nothing is lost
+  python3 tools/leaderboard.py rotate rollback [--apply]   (again)
+                                                    # phase 2: refuses until copy-back has caught up; then puts back the saved
+                                                    # manifest byte for byte (undeclares the new collections)
   python3 tools/leaderboard.py lb-admin alerts|revoke-uid UID|revoke-all [--apply]
                                                     # Worker D1 (P2-1/P2-2/P2-3): prints the `wrangler d1 execute` command;
                                                     # --apply runs it (needs the owner's Cloudflare login)
@@ -356,7 +360,7 @@ def cmd_fix_late_week(a):
 # ---------------- C1 (JC-34 round 2): move to random collection names ----------------
 import secrets, re, subprocess
 
-STEP = {'new': 0, 'declared': 1, 'copied': 2, 'closed': 3, 'rolled_back': 4}  # stored as numbers (no strings for the secret scan)
+STEP = {'new': 0, 'declared': 1, 'copied': 2, 'closed': 3, 'rolled_back': 4, 'rolling_back': 5}  # stored as numbers (no strings for the secret scan)
 
 
 def new_names():
@@ -515,21 +519,56 @@ def cmd_rotate_verify(get=None):
     print('SAME: the old names answer exactly like a name that never existed')
 
 
-def cmd_rotate_rollback(apply_):
-    n = need_names(); p = manifest_path(); bk = os.path.join(ROTATE_DIR, 'manifest-before-rotate.json')
+def _rollback_backup():
+    bk = os.path.join(ROTATE_DIR, 'manifest-before-rotate.json')
     if not os.path.exists(bk): sys.exit('STOP: no saved manifest (rotate declare --apply never ran)')
-    print('plan: put back the manifest saved before `rotate declare` (old names live again, new ones undeclared). '
-          'Then point LB_LIVE/LB_ARCHIVE back at the old names and redeploy, and run `rotate copy-back`.')
+    return bk
+
+
+def _copy_back_left(n, old):
+    """Records the Worker wrote to the NEW live that are not yet in the OLD archive (both must be readable)."""
+    new_live, old_arch = list_all(n['live']), list_all(old['archive'])
+    if new_live is None: sys.exit('STOP: the new live collection is not readable; keep it declared until copy-back is done')
+    if old_arch is None: sys.exit('STOP: the old archive is not readable yet (publish the phase-1 manifest first)')
+    return plan_copy([('r-', new_live, False)], old_arch, 'back-')[0]
+
+
+def cmd_rotate_rollback(apply_):
+    """Two phases, so no pick written after the cut-over is ever stranded:
+      phase 1: manifest = the saved pre-rotate manifest PLUS the new collections (old names live again, new still readable).
+               Then: publish, point LB_LIVE/LB_ARCHIVE back at the old names and redeploy, `rotate copy-back --apply`.
+      phase 2: only once copy-back has caught up (every new-live record is in the old archive): put back the saved
+               manifest byte for byte, which undeclares the new collections."""
+    n = need_names(); p = manifest_path(); bk = _rollback_backup()
+    if n.get('step') == STEP['rolled_back']: print('already rolled back (nothing to do)'); return
+    if n.get('step') != STEP['rolling_back']:
+        saved, cur = json.load(open(bk)), json.load(open(p))
+        both = json.loads(json.dumps(saved))
+        for k in ('live', 'archive'):
+            if n[k] in cur['collections']: both['collections'][n[k]] = cur['collections'][n[k]]
+        print('rollback phase 1 plan: re-declare the old collections and KEEP the new ones declared (so picks written to '
+              'the new live can still be copied back).')
+        if not apply_: print('DRY RUN: nothing written. Add --apply.'); return
+        open(p, 'w').write(json.dumps(both, indent=2) + '\n')
+        n['step'] = STEP['rolling_back']; save_names(n)
+        print('phase 1 written. Next: (1) publish the site; (2) point LB_LIVE/LB_ARCHIVE back at the old names and redeploy '
+              'the Worker; (3) `rotate copy-back --apply`; (4) `rotate rollback --apply` again to undeclare the new collections.')
+        return
+    left = _copy_back_left(n, family())
+    if left: sys.exit(f'STOP: {len(left)} pick record(s) in the new live are not copied back yet; run `rotate copy-back --apply` first')
+    print('rollback phase 2 plan: every new-live record is in the old archive; put back the saved manifest (undeclares the new collections).')
     if not apply_: print('DRY RUN: nothing written. Add --apply.'); return
     shutil.copyfile(bk, p)
     n['step'] = STEP['rolled_back']; save_names(n)
-    print('manifest restored. Publish the site.')
+    print('manifest restored. Publish the site. (Keep the names file and backups until the rollback is verified.)')
 
 
 def cmd_rotate_copy_back(apply_, bdir):
     n, old = need_names(), family()
+    if n.get('step') != STEP['rolling_back']: sys.exit('STOP: run `rotate rollback --apply` (phase 1) first; copy-back runs while both sets are declared')
     _copy(apply_, [('new-live', n['live'], 'r-', False)], old['archive'], bdir, 'back-',
           'cleanup: delete this backup folder once the rollback is verified (it holds everyone\'s picks)')
+    if apply_: print('next: `rotate rollback --apply` (phase 2) to undeclare the new collections, then publish')
 
 
 def cmd_rotate(a):
