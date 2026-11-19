@@ -7,13 +7,23 @@
 #   SHA-256, its 40-char prefix and both family collection names. The app only derives these at runtime from what the user types.
 # or ships config.local.json itself. Searches UTF-8 and UTF-16LE, case-insensitive, in every file (APK: unzipped, incl.
 # assets/index.android.bundle Hermes bytecode and classes*.dex). Never prints a value: only which key leaked and where.
+# Config is resolved the same way as gen-appconfig.sh (tools/resolve-appconfig.sh): the optional [config.json] (default
+# app/config.local.json) first, then per-key fallback to app/config.example.json (or LEAK_EXAMPLE_CONFIG). A missing
+# feedbackEnabled on local therefore inherits example (now true in the store/public build), so a bundled inbox name is
+# allowed; an explicit local true or false is respected. Other secret checks are unchanged.
 # Usage: bash tools/leak-check.sh apk <file.apk> [config.json]
 #        bash tools/leak-check.sh pwa <build-dir>  [config.json]
 set -uo pipefail
 MODE=${1:?usage: leak-check.sh apk|pwa <apk-or-dir> [config.json]}; TARGET=${2:?usage: leak-check.sh apk|pwa <apk-or-dir> [config.json]}
-D=$(cd "$(dirname "$0")/.." && pwd); CFG=${3:-$D/app/config.local.json}
-[ -f "$CFG" ] || { echo "leak-check: no config to check against ($CFG)" >&2; exit 2; }
+D=$(cd "$(dirname "$0")/.." && pwd)
+LOCAL_CFG=${3:-$D/app/config.local.json}
+EX_CFG=${LEAK_EXAMPLE_CONFIG:-$D/app/config.example.json}
+[ -f "$LOCAL_CFG" ] || [ -f "$EX_CFG" ] || { echo "leak-check: no config to check against ($LOCAL_CFG, $EX_CFG)" >&2; exit 2; }
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT; chmod 700 "$TMP"
+if ! bash "$D/tools/resolve-appconfig.sh" "$LOCAL_CFG" "$EX_CFG" > "$TMP/cfg.json"; then
+  echo "leak-check: cannot resolve config" >&2; exit 2
+fi
+CFG=$TMP/cfg.json
 case "$MODE" in
   apk) [ -f "$TARGET" ] || { echo "leak-check: no such APK" >&2; exit 2; }
        unzip -q -o "$TARGET" -d "$TMP/t" || { echo "leak-check: cannot unzip APK" >&2; exit 2; }
