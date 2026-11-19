@@ -9,6 +9,7 @@ import InstallHint from './src/screens/InstallHint';
 import { C } from './src/theme';
 import { AppCtx, Stars } from './src/ui';
 import { loadUser, loadLeagues, loadBundle, Bundle } from './src/model';
+import { normalizeSleeperUsername, sleeperUsernameHint, isSleeperUserNotFound } from './src/username';
 import { saveSetting, loadSetting } from './src/api';
 import Home from './src/screens/Home';
 import Matchup from './src/screens/Matchup';
@@ -86,7 +87,9 @@ function Main() {
     saveSetting('league', lid);
   }, []);
 
-  const start = useCallback(async (name: string) => {
+  const start = useCallback(async (raw: string) => {
+    const name = normalizeSleeperUsername(raw);
+    if (!name) { setErr(sleeperUsernameHint('')); setPhase('error'); return; }
     try {
       setErr(''); setPhase('loading'); setMsg('Finding your Sleeper account…');
       const u = await loadUser(name);
@@ -113,7 +116,7 @@ function Main() {
           if (m) { setNote(m); setTimeout(() => setNote(x => (x === m ? '' : x)), 6000); }
         } catch {}
       })();
-    } catch (e: any) { setErr(e?.message || String(e)); setPhase('error'); }
+    } catch (e: any) { setErr(isSleeperUserNotFound(e) ? sleeperUsernameHint(name) : (e?.message || String(e))); setPhase('error'); }
   }, [openLeague]);
 
   useEffect(() => { (async () => { const saved = await loadSetting('username'); if (saved) { setUsername(saved); start(saved); } else if (qp('auto') && qp('user')) start(qp('user')!); else setPhase('onboard'); })(); }, []);
@@ -141,7 +144,7 @@ function Main() {
               <Text style={{ color: C.sub, fontSize: 12, fontWeight: '700' }}>SLEEPER USERNAME</Text>
               <TextInput value={username} onChangeText={setUsername} placeholder="Your Sleeper username" placeholderTextColor={C.dim} autoFocus={tutorial == null} autoCapitalize="none" autoCorrect={false} onSubmitEditing={() => start(username)}
                 style={{ backgroundColor: 'rgba(22,28,51,0.9)', color: C.text, borderRadius: 14, padding: 14, fontSize: 17, borderWidth: 1, borderColor: C.border }} />
-              <Pressable onPress={() => username.trim() && start(username.trim())} style={{ borderRadius: 14, overflow: 'hidden', opacity: username.trim() ? 1 : 0.5 }}>
+              <Pressable onPress={() => normalizeSleeperUsername(username) && start(username)} style={{ borderRadius: 14, overflow: 'hidden', opacity: normalizeSleeperUsername(username) ? 1 : 0.5 }}>
                 <LinearGradient colors={[C.mint, C.purple]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ padding: 15, alignItems: 'center' }}>
                   <Text style={{ color: '#fff', fontWeight: '900', fontSize: 16 }}>Launch 🚀</Text>
                 </LinearGradient>

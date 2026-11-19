@@ -23,10 +23,16 @@ export function shouldShowInstallHint(opts: { web: boolean; standalone: boolean;
   return opts.web && !opts.standalone && !opts.dismissed;
 }
 
-export function installHintCopy(ua = ''): { title: string; body: string; steps: string } {
-  const ios = /iPhone|iPad|iPod/i.test(ua);
+/** iPhone, iPod, iPad, and iPadOS 13+ (which reports a desktop Macintosh UA; touch points tell it apart from a Mac). */
+export function isIosDevice(ua = '', maxTouchPoints = 0): boolean {
+  if (/iPhone|iPad|iPod/i.test(ua)) return true;
+  return /Macintosh/i.test(ua) && maxTouchPoints > 1;
+}
+
+export function installHintCopy(ua = '', maxTouchPoints = 0): { title: string; body: string; steps: string } {
+  const ios = isIosDevice(ua, maxTouchPoints);
   const title = 'Add this to your Home Screen';
-  const body = 'Open Galaxy Gridiron from the new icon, not from this browser tab. In a regular tab, this phone may clear your picks.';
+  const body = 'Open Galaxy Gridiron from the new icon, not from this browser tab. In a regular tab, this device may clear your picks.';
   const steps = ios
     ? 'Tap Share (the square with an arrow), then Add to Home Screen, then Add.'
     : 'Open the browser menu and tap Add to Home Screen or Install app.';

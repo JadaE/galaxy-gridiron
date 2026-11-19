@@ -1,4 +1,5 @@
 import { sleeper, stats, fantasyCalc, P, MIN, DAY, HOUR } from './api';
+import { normalizeSleeperUsername, sleeperUsernameHint, isSleeperUserNotFound } from './username';
 import { Valuer } from './valuation';
 import { slimJunk } from './junk';
 import { recordSnapshot } from './news';
@@ -39,9 +40,16 @@ export const deadThisWeek = (b: Bundle, id: string | null) => !id || id === '0' 
 const num = (a?: number, d?: number) => (a || 0) + (d || 0) / 100;
 
 export async function loadUser(username: string) {
-  const u = await sleeper.user(username);
-  if (!u || !u.user_id) throw new Error(`No Sleeper user named "${username}"`);
-  return u;
+  const name = normalizeSleeperUsername(username);
+  if (!name) throw new Error(sleeperUsernameHint(''));
+  try {
+    const u = await sleeper.user(name);
+    if (!u || !u.user_id) throw new Error(sleeperUsernameHint(name));
+    return u;
+  } catch (e) {
+    if (isSleeperUserNotFound(e)) throw new Error(sleeperUsernameHint(name));
+    throw e;
+  }
 }
 
 /** Current-season leagues plus every previous season reachable through previous_league_id. */
