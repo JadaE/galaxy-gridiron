@@ -128,7 +128,7 @@ export default function Settings({ onClose, section }: { onClose: () => void; se
           <View style={{ flexDirection: 'row', marginTop: 10 }}><Btn label={fbState.busy ? 'Sending…' : 'Send feedback'} onPress={submitFb} disabled={!!fbState.busy || fbText.trim().length < 3} /></View>
           {fbState.ok ? <Text style={{ color: C.green, marginTop: 8, fontSize: 12.5 }}>{fbState.ok}</Text> : fbState.err ? <Text style={{ color: C.red, marginTop: 8, fontSize: 12.5 }}>{fbState.err}</Text> : null}
           <Text style={[T.sub, { marginTop: 10, color: C.dim }]}>Attached automatically: app v{VERSION_NAME}, your Sleeper username{me?.username ? ` (${me.display_name || me.username})` : ''}, and your device/OS. Nothing else.</Text>
-          </>) : <Text style={T.sub}>Sending feedback from the app is paused in this version. It comes back once the app has a shared backend.</Text>}
+          </>) : null}
         </Card>
 
         <Card title="AI chat" emoji="🛰️" accent={C.mint}>

@@ -15,18 +15,14 @@ const t = async (n: string, f: () => any) => { try { await f(); pass++; console.
     assert.match(r.app, /^0\.0\.\d+ \(\d+\)/); assert.ok(r.device.length > 0); assert.equal(r.user, 'testuser'); assert.ok(r.ts > 0);
   });
   await t('feedback: unknown kind becomes bug; too-short text rejected', () => { assert.equal(buildRecord({ kind: 'x' as any, text: 'abc' }).kind, 'bug'); assert.throws(() => buildRecord({ kind: 'idea', text: ' a ' })); });
-  // JC-59: store/public web build has feedback on, using the existing public-insert inbox (no key in the client).
-  await t('feedback is on in the store/public build and the inbox name is bundled', () => {
-    assert.equal(feedbackOn(), true);
-    assert.match(FEEDBACK_COLLECTION, /^(fb[0-9a-f]{30}|YOUR_COLLECTION_ID)$/);
+  // JC-95: store/public web build has feedback off; the inbox name is not bundled.
+  await t('feedback is off in the store/public build and no inbox name is bundled', async () => {
+    assert.equal(feedbackOn(), false);
+    assert.equal(FEEDBACK_COLLECTION, '');
+    let calls = 0;
+    await assert.rejects(sendFeedback({ kind: 'bug', text: 'hello' }, (async () => { calls++; return { ok: true, status: 201 }; }) as any), /paused/);
+    assert.equal(calls, 0);
   });
-  await t('feedback POST goes to the Site Data collection, insert only', async () => {
-    let seen: any = null;
-    await sendFeedback({ kind: 'idea', text: 'dark mode for picks' }, (async (u: any, o: any) => { seen = { u, o }; return { ok: true, status: 201 } as any; }) as any);
-    assert.ok(seen.u.endsWith('/.herenow/data/' + FEEDBACK_COLLECTION)); assert.equal(seen.o.method, 'POST'); assert.equal(JSON.parse(seen.o.body).kind, 'idea');
-    assert.ok(seen.o.headers['Idempotency-Key']); assert.equal(seen.o.headers['content-type'], 'application/json');
-  });
-  await t('feedback: 429 gives a friendly message', async () => { await assert.rejects(sendFeedback({ kind: 'bug', text: 'hello' }, (async () => ({ ok: false, status: 429 })) as any), /Too many/); });
   await t('relay URLs stay under the PWA folder', () => { assert.equal(relayUrl('yt', '?channel_id=UCx'), '/relay/yt?channel_id=UCx'); assert.equal(relayUrl('espn', '/scoreboard'), '/relay/espn/scoreboard'); });
   await t('install hint: only in a browser tab, not after Home Screen or dismiss', () => {
     assert.equal(shouldShowInstallHint({ web: true, standalone: false, dismissed: false }), true);

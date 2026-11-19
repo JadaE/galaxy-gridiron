@@ -5,7 +5,7 @@ import { VERSION_NAME, VERSION_CODE } from './version';
 import { SITE } from './picks/sync';
 import { FEEDBACK_COLLECTION_ID, FEEDBACK_ENABLED } from './config';
 
-// v0.0.12+: one switch (feedbackEnabled in the config). On in the store/public web build; the existing here.now inbox is the backend.
+// v0.0.12+: one switch (feedbackEnabled in the config). Off in the store/public web build; the owner inbox tooling is unchanged.
 export const feedbackOn = () => FEEDBACK_ENABLED;
 
 export const FEEDBACK_COLLECTION = FEEDBACK_COLLECTION_ID;

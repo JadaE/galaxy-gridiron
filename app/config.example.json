@@ -5,7 +5,7 @@
   "publicWebPath": "play",
   "picksCollection": "YOUR_COLLECTION_ID",
   "feedbackCollection": "YOUR_COLLECTION_ID",
-  "feedbackEnabled": true,
+  "feedbackEnabled": false,
   "pwaSecretPath": "YOUR_SECRET_PATH",
   "publishPaths": {
     "v001": "YOUR_SECRET_PATH",
