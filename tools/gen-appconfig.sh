@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Write app/src/appconfig.generated.json (gitignored) with ONLY the public keys the app bundles:
 #   siteSlug, publicUpdatePath (v0.0.12 store channel: a public, non-secret folder), feedbackEnabled, feedbackCollection.
-# feedbackCollection is bundled ONLY when feedbackEnabled is true (v0.0.12 ships with feedback off, so it's "").
+# feedbackCollection is bundled ONLY when feedbackEnabled is true (store/public web build: on, via config.example.json).
 # The private update channel, the old picks collection and every secret path stay out of the bundle (tools/leak-check.sh checks).
 # Values come from app/config.local.json, falling back per key to app/config.example.json (or, with no jq / no example,
 # a copy of app/src/appconfig.default.json).
