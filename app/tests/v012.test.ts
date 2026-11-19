@@ -27,12 +27,15 @@ t('derived names are valid here.now collection names, stable, and differ per pas
 });
 
 console.log('Store config');
-t('no private update channel or picks collection is bundled; feedback is off', () => {
+t('no private update channel or picks collection is bundled; feedback is on', () => {
   assert.deepEqual(Object.keys(CONFIG).sort(), ['feedbackCollection', 'feedbackEnabled', 'publicUpdatePath', 'siteSlug']);
-  assert.equal(CONFIG.feedbackEnabled, false);
+  const example = JSON.parse(fs.readFileSync(__dirname + '/../config.example.json', 'utf8'));
+  assert.equal(example.feedbackEnabled, true);
+  assert.equal(CONFIG.feedbackEnabled, true);
   assert.ok(UPDATE_URL.endsWith('/' + CONFIG.publicUpdatePath + '/version.json'));
   const gen = JSON.parse(fs.readFileSync(__dirname + '/../src/appconfig.generated.json', 'utf8'));
-  assert.equal(gen.feedbackCollection, '', 'feedback collection is not bundled while feedback is off');
+  assert.equal(gen.feedbackEnabled, true);
+  assert.match(gen.feedbackCollection, /^(fb[0-9a-f]{30}|YOUR_COLLECTION_ID)$/, 'existing inbox name is bundled when feedback is on');
   assert.ok(!('updateChannelPath' in gen) && !('picksCollection' in gen));
 });
 
