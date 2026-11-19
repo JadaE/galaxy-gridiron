@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { buildRecord, sendFeedback, FEEDBACK_COLLECTION, feedbackOn } from '../src/feedback';
 import { relayUrl, shouldShowInstallHint, installHintCopy, isIosDevice } from '../src/web';
 import { normalizeSleeperUsername, sleeperUsernameHint, isSleeperUserNotFound } from '../src/username';
+import { loadUser } from '../src/model';
 import { readFileSync } from 'node:fs';
 let pass = 0, fail = 0;
 const t = async (n: string, f: () => any) => { try { await f(); pass++; console.log('  ✓', n); } catch (e: any) { fail++; console.log('  ✗', n, '\n     ', e.message); } };
@@ -91,6 +92,27 @@ const t = async (n: string, f: () => any) => { try { await f(); pass++; console.
     assert.equal(isSleeperUserNotFound(new Error('HTTP 404')), true);
     assert.equal(isSleeperUserNotFound(new Error('HTTP 500')), false);
     assert.equal(isSleeperUserNotFound(new Error('Failed to fetch')), false);
+  });
+  await t("'@@x' is looked up and stored as '@x' (normalize once; lookup matches storage)", async () => {
+    const stored = normalizeSleeperUsername('@@x');
+    assert.equal(stored, '@x');
+    const seen: string[] = [];
+    const prev = globalThis.fetch;
+    globalThis.fetch = (async (url: any) => {
+      const path = String(url);
+      if (path.includes('/user/')) {
+        seen.push(decodeURIComponent(path.split('/user/')[1]));
+        return new Response(JSON.stringify({ user_id: '1000000000000000999', username: seen[0] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error('unexpected fetch ' + path);
+    }) as any;
+    try {
+      const u = await loadUser(stored);
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0], '@x');
+      assert.equal(seen[0], stored);
+      assert.equal(u.username, '@x');
+    } finally { globalThis.fetch = prev; }
   });
   console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

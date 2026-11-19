@@ -1,5 +1,5 @@
 import { sleeper, stats, fantasyCalc, P, MIN, DAY, HOUR } from './api';
-import { normalizeSleeperUsername, sleeperUsernameHint, isSleeperUserNotFound } from './username';
+import { sleeperUsernameHint, isSleeperUserNotFound } from './username';
 import { Valuer } from './valuation';
 import { slimJunk } from './junk';
 import { recordSnapshot } from './news';
@@ -40,14 +40,15 @@ export const deadThisWeek = (b: Bundle, id: string | null) => !id || id === '0' 
 const num = (a?: number, d?: number) => (a || 0) + (d || 0) / 100;
 
 export async function loadUser(username: string) {
-  const name = normalizeSleeperUsername(username);
-  if (!name) throw new Error(sleeperUsernameHint(''));
+  // Username is normalized once by the caller (start). Do not strip again, or '@@x' would
+  // be looked up as 'x' while the saved setting stayed '@x'.
+  if (!username) throw new Error(sleeperUsernameHint(''));
   try {
-    const u = await sleeper.user(name);
-    if (!u || !u.user_id) throw new Error(sleeperUsernameHint(name));
+    const u = await sleeper.user(username);
+    if (!u || !u.user_id) throw new Error(sleeperUsernameHint(username));
     return u;
   } catch (e) {
-    if (isSleeperUserNotFound(e)) throw new Error(sleeperUsernameHint(name));
+    if (isSleeperUserNotFound(e)) throw new Error(sleeperUsernameHint(username));
     throw e;
   }
 }
