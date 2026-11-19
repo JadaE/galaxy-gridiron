@@ -4,6 +4,7 @@ import { Screen, Card, PlayerRow, Stat, useApp, T } from '../ui';
 import { Lines, Bars, Ring } from '../charts';
 import { GradeTeaser } from './ReportCard';
 import UpdateBanner from './UpdateBanner';
+import InstallHint from './InstallHint';
 import { C } from '../theme';
 import { lineupAlerts, summary, fmt, ordinal, projOf, ppg, slotLabel, contributors, pname } from '../model';
 
@@ -27,6 +28,7 @@ export default function Home() {
   return (
     <Screen info="team" title={me.name} subtitle={`@${me.display} · ${b.isPast ? 'Final' : 'Week ' + b.week}`} right={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}><Pressable onPress={openVideos} hitSlop={8} accessibilityLabel="Videos" style={{ flexDirection: 'row', alignItems: 'center', gap: 4, borderRadius: 14, borderWidth: 1, borderColor: C.magenta + '99', backgroundColor: 'rgba(198,76,255,0.14)', paddingHorizontal: 9, paddingVertical: 5 }}><Text style={{ fontSize: 13 }}>🎬</Text><Text style={{ color: C.text, fontSize: 12, fontWeight: '800' }}>Videos</Text></Pressable><Pressable onPress={() => openSettings()} hitSlop={10} accessibilityLabel="Settings" style={{ padding: 6 }}><Text style={{ fontSize: 22 }}>⚙️</Text></Pressable></View>}>
       <UpdateBanner />
+      <InstallHint compact />
       {liveNow ? (
         <Pressable onPress={() => go('Matchup')} style={{ borderRadius: 14, borderWidth: 1, borderColor: C.red + 'aa', backgroundColor: 'rgba(255,92,122,0.12)', padding: 11, flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Text style={{ fontSize: 14 }}>🔴</Text><Text style={{ color: C.text, fontWeight: '800', flex: 1 }}>Your players are on the field</Text><Text style={{ color: C.mint, fontWeight: '800' }}>Live matchup ›</Text>
