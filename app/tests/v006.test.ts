@@ -1,7 +1,9 @@
 // Run: npx tsx tests/v006.test.ts  (tutorial, feedback, web relay helpers)
 import assert from 'node:assert/strict';
 import { buildRecord, sendFeedback, FEEDBACK_COLLECTION, feedbackOn } from '../src/feedback';
-import { relayUrl, shouldShowInstallHint, installHintCopy } from '../src/web';
+import { relayUrl, shouldShowInstallHint, installHintCopy, isIosDevice } from '../src/web';
+import { normalizeSleeperUsername, sleeperUsernameHint, isSleeperUserNotFound } from '../src/username';
+import { loadUser } from '../src/model';
 import { readFileSync } from 'node:fs';
 let pass = 0, fail = 0;
 const t = async (n: string, f: () => any) => { try { await f(); pass++; console.log('  ✓', n); } catch (e: any) { fail++; console.log('  ✗', n, '\n     ', e.message); } };
@@ -51,6 +53,66 @@ const t = async (n: string, f: () => any) => { try { await f(); pass++; console.
     assert.match(signup, /Home Screen/);
     const replayBody = tut.split('if (signup)')[0];
     assert.doesNotMatch(replayBody, /Home Screen/);
+  });
+  const MAC = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15';
+  await t('iPadOS 13+ desktop Macintosh UA with touch is treated as iPad and gets Share then Add to Home Screen', () => {
+    assert.equal(isIosDevice(MAC, 0), false);
+    assert.equal(isIosDevice(MAC, 1), false);
+    assert.equal(isIosDevice(MAC, 2), true);
+    assert.equal(isIosDevice(MAC, 5), true);
+    const ipad = installHintCopy(MAC, 5);
+    assert.match(ipad.steps, /Share/);
+    assert.match(ipad.steps, /Add to Home Screen/);
+    const mac = installHintCopy(MAC, 0);
+    assert.match(mac.steps, /browser menu/);
+    assert.doesNotMatch(mac.steps, /Share \(the square/);
+    const named = installHintCopy('Mozilla/5.0 (iPad; CPU OS 16_0 like Mac OS X)', 0);
+    assert.match(named.steps, /Share/);
+  });
+  await t('install note covers iPad Share then Add to Home Screen', () => {
+    const note = readFileSync(new URL('../../docs/IPHONE_INSTALL.md', import.meta.url), 'utf8');
+    assert.match(note, /iPad/);
+    assert.match(note, /Share/);
+    assert.match(note, /Add to Home Screen/);
+  });
+  await t('username entry trims whitespace and one leading @', () => {
+    assert.equal(normalizeSleeperUsername('  MockUserA  '), 'MockUserA');
+    assert.equal(normalizeSleeperUsername('@MockUserA'), 'MockUserA');
+    assert.equal(normalizeSleeperUsername('  @MockUserA  '), 'MockUserA');
+    assert.equal(normalizeSleeperUsername('@@MockUserA'), '@MockUserA'); // only one leading @
+    assert.equal(normalizeSleeperUsername(' @ '), '');
+    assert.equal(normalizeSleeperUsername(''), '');
+  });
+  await t('failed Sleeper lookup explains username vs display name and where to find it', () => {
+    const msg = sleeperUsernameHint(' @MockDisplay ');
+    assert.match(msg, /No Sleeper user named "MockDisplay"/);
+    assert.match(msg, /not your display name/);
+    assert.match(msg, /profile icon in the bottom-left corner/);
+    assert.equal(isSleeperUserNotFound(new Error('No Sleeper user named "MockDisplay"')), true);
+    assert.equal(isSleeperUserNotFound(new Error('HTTP 404')), true);
+    assert.equal(isSleeperUserNotFound(new Error('HTTP 500')), false);
+    assert.equal(isSleeperUserNotFound(new Error('Failed to fetch')), false);
+  });
+  await t("'@@x' is looked up and stored as '@x' (normalize once; lookup matches storage)", async () => {
+    const stored = normalizeSleeperUsername('@@x');
+    assert.equal(stored, '@x');
+    const seen: string[] = [];
+    const prev = globalThis.fetch;
+    globalThis.fetch = (async (url: any) => {
+      const path = String(url);
+      if (path.includes('/user/')) {
+        seen.push(decodeURIComponent(path.split('/user/')[1]));
+        return new Response(JSON.stringify({ user_id: '1000000000000000999', username: seen[0] }), { status: 200, headers: { 'content-type': 'application/json' } });
+      }
+      throw new Error('unexpected fetch ' + path);
+    }) as any;
+    try {
+      const u = await loadUser(stored);
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0], '@x');
+      assert.equal(seen[0], stored);
+      assert.equal(u.username, '@x');
+    } finally { globalThis.fetch = prev; }
   });
   console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

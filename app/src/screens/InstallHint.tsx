@@ -10,8 +10,8 @@ export default function InstallHint({ compact = false }: { compact?: boolean }) 
   useEffect(() => { loadSetting(INSTALL_HINT_KEY).then(v => setDismissed(!!v)); }, []);
   if (dismissed === null) return null;
   if (!shouldShowInstallHint({ web: IS_WEB, standalone: isStandalone(), dismissed })) return null;
-  const ua = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
-  const copy = installHintCopy(ua);
+  const nav = typeof navigator !== 'undefined' ? navigator : undefined;
+  const copy = installHintCopy(nav?.userAgent || '', nav?.maxTouchPoints || 0);
   const dismiss = () => { setDismissed(true); saveSetting(INSTALL_HINT_KEY, String(Date.now())); };
   return (
     <View testID="install-hint" style={{ borderRadius: 16, borderWidth: 1, borderColor: C.gold + '88', backgroundColor: C.gold + '14', padding: compact ? 12 : 14, gap: 6 }}>
