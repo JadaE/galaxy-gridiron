@@ -1,7 +1,8 @@
 // Run: npx tsx tests/v006.test.ts  (tutorial, feedback, web relay helpers)
 import assert from 'node:assert/strict';
 import { buildRecord, sendFeedback, FEEDBACK_COLLECTION, feedbackOn } from '../src/feedback';
-import { relayUrl } from '../src/web';
+import { relayUrl, shouldShowInstallHint, installHintCopy } from '../src/web';
+import { readFileSync } from 'node:fs';
 let pass = 0, fail = 0;
 const t = async (n: string, f: () => any) => { try { await f(); pass++; console.log('  ✓', n); } catch (e: any) { fail++; console.log('  ✗', n, '\n     ', e.message); } };
 (async () => {
@@ -28,5 +29,28 @@ const t = async (n: string, f: () => any) => { try { await f(); pass++; console.
     await t('feedback: 429 gives a friendly message', async () => { await assert.rejects(sendFeedback({ kind: 'bug', text: 'hello' }, (async () => ({ ok: false, status: 429 })) as any), /Too many/); });
   }
   await t('relay URLs stay under the PWA folder', () => { assert.equal(relayUrl('yt', '?channel_id=UCx'), '/relay/yt?channel_id=UCx'); assert.equal(relayUrl('espn', '/scoreboard'), '/relay/espn/scoreboard'); });
+  await t('install hint: only in a browser tab, not after Home Screen or dismiss', () => {
+    assert.equal(shouldShowInstallHint({ web: true, standalone: false, dismissed: false }), true);
+    assert.equal(shouldShowInstallHint({ web: true, standalone: true, dismissed: false }), false);
+    assert.equal(shouldShowInstallHint({ web: true, standalone: false, dismissed: true }), false);
+    assert.equal(shouldShowInstallHint({ web: false, standalone: false, dismissed: false }), false);
+  });
+  await t('install hint: iPhone copy names Share and Add to Home Screen; others name the browser menu', () => {
+    const ios = installHintCopy('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)');
+    assert.match(ios.title, /Home Screen/);
+    assert.match(ios.steps, /Share/);
+    assert.match(ios.steps, /Add to Home Screen/);
+    assert.match(ios.body, /clears? your picks|clear your picks/);
+    const other = installHintCopy('Mozilla/5.0 (Linux; Android 14)');
+    assert.match(other.steps, /browser menu/);
+    assert.doesNotMatch(other.steps, /Share \(the square/);
+  });
+  await t('signup tutorial tells new players to add the Home Screen icon before entering a username', () => {
+    const tut = readFileSync(new URL('../src/screens/Tutorial.tsx', import.meta.url), 'utf8');
+    const signup = tut.split('if (signup)')[1] || '';
+    assert.match(signup, /Home Screen/);
+    const replayBody = tut.split('if (signup)')[0];
+    assert.doesNotMatch(replayBody, /Home Screen/);
+  });
   console.log(`\n${pass} passed, ${fail} failed`); process.exit(fail ? 1 : 0);
 })();

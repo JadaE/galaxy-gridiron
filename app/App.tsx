@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useInsets } from './src/safe';
 import Tutorial, { tutorialSeen } from './src/screens/Tutorial';
+import InstallHint from './src/screens/InstallHint';
 import { C } from './src/theme';
 import { AppCtx, Stars } from './src/ui';
 import { loadUser, loadLeagues, loadBundle, Bundle } from './src/model';
@@ -130,12 +131,13 @@ function Main() {
       <Galaxy>
         <StatusBar style="light" />
         {phase === 'onboard' ? <Tutorial visible={tutorial != null} signup startAt={tutorial || 0} onDone={() => setTutorial(null)} /> : null}
-        <View style={{ flex: 1, justifyContent: 'center', padding: 28 }}>
+        <ScrollView contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 28 }} keyboardShouldPersistTaps="handled">
           <Text style={{ fontSize: 46, textAlign: 'center' }}>🏈🪐</Text>
           <Text style={{ color: C.text, fontSize: 32, fontWeight: '900', textAlign: 'center', marginTop: 8 }}>Galaxy Gridiron</Text>
           <Text style={{ color: '#C9C3F5', textAlign: 'center', marginTop: 6 }}>Your Sleeper leagues, at a glance</Text>
           {phase === 'onboard' || phase === 'error' ? (
             <View style={{ marginTop: 34, gap: 12 }}>
+              <InstallHint />
               <Text style={{ color: C.sub, fontSize: 12, fontWeight: '700' }}>SLEEPER USERNAME</Text>
               <TextInput value={username} onChangeText={setUsername} placeholder="Your Sleeper username" placeholderTextColor={C.dim} autoFocus={tutorial == null} autoCapitalize="none" autoCorrect={false} onSubmitEditing={() => start(username)}
                 style={{ backgroundColor: 'rgba(22,28,51,0.9)', color: C.text, borderRadius: 14, padding: 14, fontSize: 17, borderWidth: 1, borderColor: C.border }} />
@@ -153,7 +155,7 @@ function Main() {
               <Text style={{ color: C.sub }}>{msg}</Text>
             </View>
           )}
-        </View>
+        </ScrollView>
       </Galaxy>
     );
   }
