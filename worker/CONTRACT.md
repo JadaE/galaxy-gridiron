@@ -44,6 +44,7 @@ Limits (else `bad_request`): 1–20 messages; each ≤4,000 chars; all messages 
 - `costUsd` = this request, computed from upstream token usage × the model's list price (uncached input, cached input, cache writes and output, with reasoning tokens counted as output). If upstream omits usage, a worst-case estimate is billed.
 - `monthSpendUsd` is shared by all paired devices (one budget). `dailyCount`/`dailyLimit` are **per device**.
 - Month and day roll over at local midnight in `TIMEZONE` (default America/Chicago).
+- Caps are checked and counted atomically on D1 in one transaction before any upstream call: a reservation holds the daily slot and the worst-case cost, then success swaps in the real cost and failure gives both back. `/usage` includes in-flight reservations, so the budget never looks under the cap mid-flight. Existing KV counters are used only to seed D1 once on a mid-month cut-over.
 
 Errors: `{ error, message }`. Cap, daily-limit and upstream errors also include the four usage fields so the cost counter can update.
 | HTTP | error | when |
@@ -52,8 +53,9 @@ Errors: `{ error, message }`. Cap, daily-limit and upstream errors also include 
 | 400 / 413 | `bad_request` | validation failed (message says why) |
 | 429 | `cap_reached` | `monthSpendUsd >= monthCapUsd`. Checked **before** any upstream call |
 | 429 | `daily_limit` | `dailyCount >= dailyLimit`. Checked **before** any upstream call |
-| 502 | `upstream` | provider error or unreachable; not charged; the daily slot is released. Message tells "prepaid balance/spend limit used up" apart from "busy" |
+| 502 | `upstream` | provider error or unreachable; not charged; the daily slot and reserved cost are released. Message tells "prepaid balance/spend limit used up" apart from "busy" |
 | 503 | `not_configured` | AI key secret missing, or model var set to a model with no price on file |
+| 503 | `unavailable` | the D1 cap store is missing or down. Fail closed: no upstream call, no KV fallback for caps. Rules chat still works. |
 
 Upstream call: OpenAI Responses API (`POST https://api.openai.com/v1/responses`), `store:false`, fixed system prompt (read-only, fantasy-football only, never claims to act on Sleeper, no betting picks).
 | tier | model | max_output_tokens | reasoning.effort |

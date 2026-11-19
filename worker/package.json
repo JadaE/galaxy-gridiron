@@ -4,7 +4,7 @@
   "private": true,
   "engines": { "node": ">=22" },
   "type": "module",
-  "description": "Read-only fantasy football AI chat proxy for the Galaxy Gridiron app (Cloudflare Worker + KV, free plan).",
+  "description": "Read-only fantasy football AI chat proxy for the Galaxy Gridiron app (Cloudflare Worker + KV + D1, free plan).",
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
