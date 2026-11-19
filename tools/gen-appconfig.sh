@@ -14,7 +14,9 @@ if ! command -v jq >/dev/null 2>&1 || [ ! -f "$EX" ]; then
   cp "$DEF" "$OUT"; echo "gen-appconfig: wrote app/src/appconfig.generated.json from appconfig.default.json (placeholders)"; exit 0
 fi
 [ -f "$LOCAL" ] || echo "gen-appconfig: no app/config.local.json, using config.example.json placeholders" >&2
-bash "$D/tools/resolve-appconfig.sh" "$LOCAL" "$EX" | jq '{
+# Public keys may fall back to example (including feedbackCollection). Secret-bearing keys never do.
+RESOLVE_INHERIT_KEYS=feedbackEnabled,siteSlug,publicUpdatePath,feedbackCollection \
+  bash "$D/tools/resolve-appconfig.sh" "$LOCAL" "$EX" | jq '{
   siteSlug: .siteSlug,
   publicUpdatePath: .publicUpdatePath,
   feedbackEnabled: (.feedbackEnabled == true),

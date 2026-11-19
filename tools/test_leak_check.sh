@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# JC-92: leak-check must resolve config the same way as gen-appconfig
-# (local first, then per-key fallback to example). Mock values only; never prints a secret.
+# JC-92: leak-check config resolution (local object required; only allow-listed
+# non-secret keys inherit from example). Mock values only; never prints a secret.
 # Run: bash tools/test_leak_check.sh
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -21,9 +21,12 @@ KS='mock-jc92-keystore-password-aaaa'
 UP='mock-jc92-update-channel-path-aaaa'
 PC='mock-jc92-picks-collection-aaaa'
 FB='fb0123456789abcdef0123456789abcd'
+# Placeholder that must NOT be inherited when local omits the secret key.
+PH='mock-jc92-example-keystore-placeholder-bbbb'
 
-write_ex() { # path feedbackEnabled
-  jq -n --arg ks "$KS" --arg up "$UP" --arg pc "$PC" --arg fb "$FB" --argjson on "$2" \
+write_ex() { # path feedbackEnabled [keystore]
+  local ks=${3:-$KS}
+  jq -n --arg ks "$ks" --arg up "$UP" --arg pc "$PC" --arg fb "$FB" --argjson on "$2" \
     '{keystorePassword:$ks, updateChannelPath:$up, picksCollection:$pc, feedbackCollection:$fb, feedbackEnabled:$on, siteSlug:"mock-site", publicUpdatePath:"store"}' > "$1"
 }
 write_local() { # path [feedbackEnabled or omit]
@@ -40,27 +43,26 @@ make_build() { # dir content
   printf '%s' "$2" > "$1/index.html"
 }
 
+LAST_RC=0
 run_leak() { # local example build
-  # stdout/stderr captured; never echo the body (may contain mock values we already know).
   local out
   set +e
   out=$(LEAK_REQUIRE_PASSWORD=0 LEAK_EXAMPLE_CONFIG="$2" bash "$ROOT/tools/leak-check.sh" pwa "$3" "$1" 2>&1)
-  local rc=$?
+  LAST_RC=$?
   set -e
   printf '%s' "$out" > "$TMP/last.out"
-  return $rc
+  return $LAST_RC
 }
-# Returns 0 if last leak-check output reports a leak of this label (not a value).
 last_leaked() { grep -q "LEAK: $1 found" "$TMP/last.out"; }
 last_ok() { grep -q 'pwa leak check OK' "$TMP/last.out"; }
+# Fail closed: non-zero, and must not have scanned-and-passed on example placeholders.
+last_fail_closed() { [ "$LAST_RC" -ne 0 ] && ! last_ok; }
 
 echo 'resolve-appconfig'
-# Missing feedbackEnabled on local inherits example true
 write_ex "$TMP/ex-on.json" true
 write_local "$TMP/local-omit.json"
 t 'local omit + example true => feedbackEnabled true' \
   bash -c 'test "$(bash "$0/tools/resolve-appconfig.sh" "$1" "$2" | jq -r .feedbackEnabled)" = true' "$ROOT" "$TMP/local-omit.json" "$TMP/ex-on.json"
-# Explicit local false / true wins over example
 write_ex "$TMP/ex-on.json" true
 write_local "$TMP/local-false.json" false
 t 'explicit local false wins over example true' \
@@ -69,11 +71,16 @@ write_ex "$TMP/ex-off.json" false
 write_local "$TMP/local-true.json" true
 t 'explicit local true wins over example false' \
   bash -c 'test "$(bash "$0/tools/resolve-appconfig.sh" "$1" "$2" | jq -r .feedbackEnabled)" = true' "$ROOT" "$TMP/local-true.json" "$TMP/ex-off.json"
-# No deep-merge of objects: local sleeper replaces example
+# Objects are taken from local only; example secrets are not deep-merged or filled in.
 jq -n '{sleeper:{username:"from-example",userId:"1000000000000000991"},siteSlug:"ex"}' > "$TMP/ex-obj.json"
 jq -n '{sleeper:{username:"from-local"}}' > "$TMP/local-obj.json"
-t 'sleeper object is replaced, not deep-merged' \
+t 'sleeper object is not deep-merged from example' \
   bash -c 'm=$(bash "$0/tools/resolve-appconfig.sh" "$1" "$2"); test "$(echo "$m" | jq -r .sleeper.username)" = from-local && test "$(echo "$m" | jq -r .sleeper.userId)" = null' "$ROOT" "$TMP/local-obj.json" "$TMP/ex-obj.json"
+# Secret-bearing keys missing on local must not inherit the example placeholder.
+jq -n --arg ph "$PH" --arg up "$UP" '{keystorePassword:$ph, updateChannelPath:$up, feedbackEnabled:true}' > "$TMP/ex-ph.json"
+jq -n --arg up "$UP" --arg pc "$PC" --arg fb "$FB" '{updateChannelPath:$up, picksCollection:$pc, feedbackCollection:$fb}' > "$TMP/local-noks.json"
+t 'secret key missing from local is not inherited from example' \
+  bash -c 'm=$(bash "$0/tools/resolve-appconfig.sh" "$1" "$2"); test "$(echo "$m" | jq -r ".keystorePassword // empty")" = ""' "$ROOT" "$TMP/local-noks.json" "$TMP/ex-ph.json"
 
 echo 'leak-check (a) fallback: local omits feedbackEnabled, example is true'
 make_build "$TMP/build-fb" "$FB"
@@ -119,14 +126,47 @@ else
   t 'picks collection in the build still fails leak-check' last_leaked picksCollection
 fi
 
+echo 'leak-check fail-closed when local is not a valid object'
+make_build "$TMP/build-clean" 'galaxy gridiron mock pwa with no secrets'
+if run_leak "$TMP/no-such-local.json" "$TMP/ex-on.json" "$TMP/build-clean"; then
+  t 'missing local file exits non-zero' false
+else
+  t 'missing local file exits non-zero' last_fail_closed
+fi
+: > "$TMP/local-empty.json"
+if run_leak "$TMP/local-empty.json" "$TMP/ex-on.json" "$TMP/build-clean"; then
+  t 'empty local file exits non-zero' false
+else
+  t 'empty local file exits non-zero' last_fail_closed
+fi
+printf 'null\n' > "$TMP/local-null.json"
+if run_leak "$TMP/local-null.json" "$TMP/ex-on.json" "$TMP/build-clean"; then
+  t 'null local file exits non-zero' false
+else
+  t 'null local file exits non-zero' last_fail_closed
+fi
+printf '[]\n' > "$TMP/local-array.json"
+if run_leak "$TMP/local-array.json" "$TMP/ex-on.json" "$TMP/build-clean"; then
+  t 'non-object local file exits non-zero' false
+else
+  t 'non-object local file exits non-zero' last_fail_closed
+fi
+
+echo 'leak-check does not scan example placeholders for omitted secrets'
+write_ex "$TMP/ex-ph-full.json" true "$PH"
+make_build "$TMP/build-ph" "$PH"
+if run_leak "$TMP/local-noks.json" "$TMP/ex-ph-full.json" "$TMP/build-ph" && last_ok && ! last_leaked keystorePassword; then
+  t 'secret key missing from local does not inherit the placeholder' true
+else
+  t 'secret key missing from local does not inherit the placeholder' false
+fi
+
 echo 'committed example stays placeholders-only, and its flag is true'
 t 'config.example.json feedbackEnabled is true' \
   bash -c 'test "$(jq -r .feedbackEnabled "$0/app/config.example.json")" = true' "$ROOT"
 t 'config.example.json still uses placeholders' \
   bash -c 'c=$(jq -r ".feedbackCollection,.keystorePassword,.updateChannelPath,.picksCollection,.pwaSecretPath,.sleeper.username" "$0/app/config.example.json"); echo "$c" | grep -q YOUR_ && ! echo "$c" | grep -Eq "mock-jc92|fb0123456789abcdef"' "$ROOT"
 
-# A clean build (no private strings) still passes against the fixture (CHECKED > 0).
-make_build "$TMP/build-clean" 'galaxy gridiron mock pwa with no secrets'
 if run_leak "$TMP/local-omit.json" "$TMP/ex-on.json" "$TMP/build-clean" && last_ok; then
   t 'clean build still passes leak-check' true
 else
@@ -142,7 +182,6 @@ t 'gen-appconfig still writes exactly the four public keys' \
   bash -c 'test "$(jq -r "keys|join(\",\")" "$0")" = "feedbackCollection,feedbackEnabled,publicUpdatePath,siteSlug"' "$GEN"
 t 'gen-appconfig feedbackEnabled follows local-then-example (true here)' \
   bash -c 'test "$(jq -r .feedbackEnabled "$0")" = true' "$GEN"
-# restore previous generated file if we copied it (gitignored; keeps the box as we found it)
 [ -f "$BEFORE" ] && cp "$BEFORE" "$GEN" || true
 
 echo
