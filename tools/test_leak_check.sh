@@ -161,9 +161,9 @@ else
   t 'secret key missing from local does not inherit the placeholder' false
 fi
 
-echo 'committed example stays placeholders-only, and its flag is true'
-t 'config.example.json feedbackEnabled is true' \
-  bash -c 'test "$(jq -r .feedbackEnabled "$0/app/config.example.json")" = true' "$ROOT"
+echo 'committed example stays placeholders-only, and its flag is false (store/public build)'
+t 'config.example.json feedbackEnabled is false' \
+  bash -c 'test "$(jq -r .feedbackEnabled "$0/app/config.example.json")" = false' "$ROOT"
 t 'config.example.json still uses placeholders' \
   bash -c 'c=$(jq -r ".feedbackCollection,.keystorePassword,.updateChannelPath,.picksCollection,.pwaSecretPath,.sleeper.username" "$0/app/config.example.json"); echo "$c" | grep -q YOUR_ && ! echo "$c" | grep -Eq "mock-jc92|fb0123456789abcdef"' "$ROOT"
 
@@ -180,8 +180,8 @@ bash "$ROOT/tools/gen-appconfig.sh" >/dev/null
 GEN=$ROOT/app/src/appconfig.generated.json
 t 'gen-appconfig still writes exactly the four public keys' \
   bash -c 'test "$(jq -r "keys|join(\",\")" "$0")" = "feedbackCollection,feedbackEnabled,publicUpdatePath,siteSlug"' "$GEN"
-t 'gen-appconfig feedbackEnabled follows local-then-example (true here)' \
-  bash -c 'test "$(jq -r .feedbackEnabled "$0")" = true' "$GEN"
+t 'gen-appconfig feedbackEnabled follows local-then-example (false here)' \
+  bash -c 'test "$(jq -r .feedbackEnabled "$0")" = false' "$GEN"
 [ -f "$BEFORE" ] && cp "$BEFORE" "$GEN" || true
 
 echo

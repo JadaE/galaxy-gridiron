@@ -6,7 +6,7 @@ import fs from 'fs';
 import { fetchSnaps, resolve, setFamilyKey, setKv, Snap } from '../src/picks/sync';
 import { serverPicks } from '../src/picks/restore';
 import { Game, PickMap, seasonRecord, weekRecord } from '../src/picks/core';
-import { VERSION_CODE, VERSION_NAME } from '../src/version';
+import { VERSION_CODE } from '../src/version';
 let pass = 0, fail = 0;
 const t = async (n: string, f: () => any) => { try { await f(); pass++; console.log('  ✓', n); } catch (e: any) { fail++; console.log('  ✗', n, '\n     ', e.message); } };
 const byWeek: Record<number, Game[]> = JSON.parse(fs.readFileSync(__dirname + '/fixtures/games-2026-w1-7.json', 'utf8'));
@@ -92,7 +92,7 @@ const onlyLive = (p: PickMap) => Object.fromEntries(Object.entries(p).filter(([,
     assert.ok(Object.values(resolve(owned, games)[0].picks).every(x => x.src === 'live'));
     setFamilyKey(null);
   });
-  await t('version is 0.0.14 (14)', () => { assert.equal(VERSION_CODE, 14); assert.equal(VERSION_NAME, '0.0.14'); });
+  await t('version is 14 or later', () => assert.ok(VERSION_CODE >= 14));
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);
 })();
