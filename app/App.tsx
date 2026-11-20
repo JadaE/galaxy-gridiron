@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { View, Text, TextInput, Pressable, ActivityIndicator, Modal, Platform, useWindowDimensions, ScrollView } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -28,6 +28,9 @@ import { loadPicks, savePicks } from './src/picks/store';
 import { loadWeek, nflNow } from './src/picks/espn';
 import { getSecret } from './src/ai/secure';
 import { startPickSync } from './src/picks/retry';
+import { applyChip, loadChipState } from './src/tags/store';
+import { flushTags } from './src/tags/sync';
+import { restoreTagsOnStart, restoreTagsMessage, saveAndQueueTag, uploadLocalTags } from './src/tags/restore';
 
 const TABS = [
   { k: 'Team', icon: '🏠' }, { k: 'Matchup', icon: '⚔️' }, { k: 'League', icon: '🏆' },
@@ -76,10 +79,22 @@ function Main() {
   // new users see it before the username screen (its last step leads there); updating users see it once after loading
   useEffect(() => { if ((phase === 'ready' || phase === 'onboard') && !qp('auto')) tutorialSeen().then(seen => { if (!seen) setTutorial(0); }); }, [phase]);
   const leagueIdForTags = b?.league.league_id;
-  useEffect(() => { if (!leagueIdForTags) return; loadSetting('tags:' + leagueIdForTags).then(v => { try { setTags(v ? JSON.parse(v) : {}); } catch { setTags({}); } }); }, [leagueIdForTags]);
-  const setTag = useCallback((id: string, t: 'never' | 'high' | null) => {
-    setTags(prev => { const n = { ...prev }; if (t) n[id] = t; else delete n[id]; if (leagueIdForTags) saveSetting('tags:' + leagueIdForTags, JSON.stringify(n)); return n; });
+  const chipRef = useRef({ tags: {} as Record<string, 'never' | 'high'>, at: {} as Record<string, number>, ts: 0 });
+  const tagFlushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!leagueIdForTags) return;
+    loadChipState(leagueIdForTags).then(s => { chipRef.current = s; setTags(s.tags); });
   }, [leagueIdForTags]);
+  const setTag = useCallback((id: string, t: 'never' | 'high' | null) => {
+    if (!leagueIdForTags) return;
+    const next = applyChip(chipRef.current, id, t);
+    chipRef.current = next;
+    setTags(next.tags);
+    const who = me || { user_id: userId, username };
+    void saveAndQueueTag(leagueIdForTags, { uid: who.user_id, username: who.username, av: (who as any).avatar }, next);
+    if (tagFlushTimer.current) clearTimeout(tagFlushTimer.current);
+    tagFlushTimer.current = setTimeout(() => { tagFlushTimer.current = null; void flushTags(); }, 2500);
+  }, [leagueIdForTags, me, userId, username]);
 
   const openLeague = useCallback(async (lid: string, uid: string, force = false) => {
     setMsg('Loading league…');
@@ -115,6 +130,17 @@ function Main() {
             { season: n.season, curWeek: n.week, load: () => loadPicks(u.user_id, n.season), save: p => savePicks(u.user_id, n.season, p), loadWeek: (s, w) => loadWeek(s, w) });
           const m = restoreMessage(r, hadLocal);
           if (m) { setNote(m); setTimeout(() => setNote(x => (x === m ? '' : x)), 6000); }
+          // JC-109: restore 🔒/💎 trade chips for this Sleeper user, then back up any that were only on the phone.
+          const tr = await restoreTagsOnStart({ uid: u.user_id, username: u.username || name, display: u.display_name, av: u.avatar || undefined }, () => getSecret('lb_family'));
+          const tm = restoreTagsMessage(tr);
+          if (tm && !m) { setNote(tm); setTimeout(() => setNote(x => (x === tm ? '' : x)), 6000); }
+          const lid = (await loadSetting('league')) || pick.league_id;
+          if (lid) {
+            await uploadLocalTags({ uid: u.user_id, username: u.username || name, av: u.avatar || undefined }, lid);
+            const s = await loadChipState(lid);
+            chipRef.current = s;
+            setTags(s.tags);
+          }
         } catch {}
       })();
     } catch (e: any) { setErr(isSleeperUserNotFound(e) ? sleeperUsernameHint(name) : (e?.message || String(e))); setPhase('error'); }
@@ -125,7 +151,7 @@ function Main() {
   // JC-38 / JC-60: retry unsent picks on launch, resume, and every few minutes — not only while the Picks tab is open.
   useEffect(() => {
     if (phase !== 'ready') return;
-    const { stop } = startPickSync({ getKey: () => getSecret('lb_family') });
+    const { stop } = startPickSync({ getKey: () => getSecret('lb_family'), onTick: () => { void flushTags(); } });
     return stop;
   }, [phase]);
 

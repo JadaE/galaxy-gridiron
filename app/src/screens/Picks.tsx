@@ -20,6 +20,8 @@ import WaitingToShare from './WaitingToShare';
 import { deriveFamilyKey, validKey, FamilyKey } from '../picks/family';
 import { getSecret, setSecret, delSecret } from '../ai/secure';
 import { restoreFromServer, onRestored, mergeRestored, weeksToShare, restoreMessage } from '../picks/restore';
+import { restoreTagsOnStart, restoreTagsMessage } from '../tags/restore';
+import { flushTags } from '../tags/sync';
 
 const qp = (k: string) => (Platform.OS === 'web' && typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get(k) : null);
 const tz = 'America/Chicago';
@@ -338,6 +340,8 @@ export default function Picks() {
                 await setSecret('lb_family', JSON.stringify(k)); setFamilyKey(k); setFk(k);
                 restoreFromServer({ season, curWeek, who: { uid, username: me.username, display: me.display_name }, load: () => loadPicks(uid, season), save: p => savePicks(uid, season, p), loadWeek: (s, w) => loadWeek(s, w) })
                   .then(rr => { const m = restoreMessage(rr, true); if (m) flash(m); }).catch(() => {});
+                restoreTagsOnStart({ uid, username: me.username, display: me.display_name, av: me.avatar }, () => getSecret('lb_family'))
+                  .then(rr => { const m = restoreTagsMessage(rr); if (m) flash(m); void flushTags(); }).catch(() => {});
                 if (!lbMe) setSheet('join');
                 return 'ok';
               }}
