@@ -65,3 +65,26 @@ export function applyChip(s: ChipState, id: string, tag: Chip | null, now = Date
   if (tag) tags[id] = tag; else delete tags[id];
   return { tags, at, ts: now };
 }
+
+/** Stable fingerprint of the chip set (tags + per-chip times). Used to skip a no-op login upload. */
+export function chipSignature(s: ChipState): string {
+  const tags = Object.keys(s.tags).sort().map(id => [id, s.tags[id]]);
+  const at = Object.keys(s.at).sort().map(id => [id, s.at[id]]);
+  return JSON.stringify({ tags, at });
+}
+
+export function uploadedKey(uid: string, leagueId: string): string { return `tags:sent:${uid}:${leagueId}`; }
+
+export async function readUploadedSignature(uid: string, leagueId: string): Promise<string | null> {
+  return kv.get(uploadedKey(uid, leagueId));
+}
+
+export async function markUploaded(uid: string, leagueId: string, s: ChipState): Promise<void> {
+  if (!validLeagueId(leagueId)) return;
+  await kv.set(uploadedKey(uid, leagueId), chipSignature(s));
+}
+
+export async function alreadyUploaded(uid: string, leagueId: string, s: ChipState): Promise<boolean> {
+  const prev = await readUploadedSignature(uid, leagueId);
+  return !!prev && prev === chipSignature(s);
+}

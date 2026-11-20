@@ -1,0 +1,10 @@
+{
+  "comment": "Name-free field overlay for the family live Site Data collection. Applied by tools/leaderboard.py manifest to the live collection only. Do not put collection names, passwords, hashes, or keys in this file. season, week and picks stay in the schema so existing pick records still validate, but they are no longer required so typ:tags records can omit them. Do not pad tag writes with dummy season, week or empty picks: shipped v0.0.12 and v0.0.14 clients do not check typ, and a padded empty-picks record could look like a complete week.",
+  "add_fields": {
+    "typ": { "type": "string", "maxLength": 16, "trim": true },
+    "tags": { "type": "object" },
+    "league": { "type": "string", "maxLength": 24, "trim": true },
+    "at": { "type": "object" }
+  },
+  "make_optional": ["season", "week", "picks"]
+}

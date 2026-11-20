@@ -4,7 +4,7 @@
 // (a newer local clear is kept). Restored chips are not re-uploaded until the user edits them.
 import { hasFamilyKey, setFamilyKey } from '../picks/sync';
 import { validKey } from '../picks/family';
-import { ChipState, loadChipState, saveChipState, validLeagueId } from './store';
+import { alreadyUploaded, chipSignature, ChipState, loadChipState, markUploaded, saveChipState, validLeagueId } from './store';
 import { QueuedTag, TagSnap, enqueueTags, fetchTagSnaps, flushTags, snapshotTags } from './sync';
 
 export type Who = { uid: string; username: string; av?: string; display?: string };
@@ -68,9 +68,11 @@ export async function restoreTagsFromServer(who: Who, fetcher: typeof fetch = fe
     const local = await loadChipState(lid);
     if (!server) continue;
     const r = mergeChips(local, server, server.createdAt);
-    if (!r.changed) continue;
-    await saveChipState(lid, r.state);
-    n += r.changed;
+    if (r.changed) { await saveChipState(lid, r.state); n += r.changed; }
+    // If the phone now matches the server set, remember it so login does not insert another snapshot.
+    if (chipSignature(r.state) === chipSignature({ tags: server.tags, at: server.at, ts: server.ts })) {
+      await markUploaded(who.uid, lid, r.state);
+    }
   }
   return n ? { status: 'restored', n } : { status: 'none' };
 }
@@ -87,12 +89,15 @@ export async function saveAndQueueTag(leagueId: string, who: Who, local: ChipSta
   await enqueueTags(snapshotTags({ uid: who.uid, un: who.username, av: who.av }, leagueId, local));
 }
 
-export async function uploadLocalTags(who: Who, leagueId: string, fetcher?: typeof fetch): Promise<void> {
-  if (!hasFamilyKey() || !validLeagueId(leagueId)) return;
+/** Back up local chips if they differ from the last successful upload. Skips a no-op insert on every login. */
+export async function uploadLocalTags(who: Who, leagueId: string, fetcher?: typeof fetch): Promise<{ sent: number; skipped?: boolean }> {
+  if (!hasFamilyKey() || !validLeagueId(leagueId)) return { sent: 0, skipped: true };
   const local = await loadChipState(leagueId);
-  if (!local.ts && !Object.keys(local.tags).length) return;
+  if (!local.ts && !Object.keys(local.tags).length) return { sent: 0, skipped: true };
+  if (await alreadyUploaded(who.uid, leagueId, local)) return { sent: 0, skipped: true };
   await enqueueTags(snapshotTags({ uid: who.uid, un: who.username, av: who.av }, leagueId, local));
-  await flushTags(fetcher);
+  const r = await flushTags(fetcher);
+  return { sent: r.sent, skipped: false };
 }
 
 export function restoreTagsMessage(r: RestoreResult): string {

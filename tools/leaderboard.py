@@ -76,12 +76,54 @@ def manifest_path():
     return os.path.join(pub, '.herenow', 'data.json')
 
 
+LIVE_SCHEMA_PATH = os.path.join(ROOT, 'tools', 'family-live-schema.json')
+
+
+def apply_live_tag_schema(coll):
+    """Overlay typ/tags/league/at and make season, week, picks optional. Live collection only. Name-free."""
+    tmpl = json.load(open(LIVE_SCHEMA_PATH))
+    fields = dict(coll.get('fields') or {})
+    for k in tmpl.get('make_optional') or []:
+        if isinstance(fields.get(k), dict):
+            f = dict(fields[k]); f.pop('required', None); fields[k] = f
+    for k, spec in (tmpl.get('add_fields') or {}).items():
+        fields[k] = json.loads(json.dumps(spec))
+    coll['fields'] = fields
+    return coll
+
+
+def validate_record(fields, data):
+    """Return None if data satisfies a here.now-style fields map, else a short reason. No collection names."""
+    types = {'string': str, 'integer': int, 'number': (int, float), 'object': dict, 'boolean': bool}
+    for name, spec in fields.items():
+        present = name in data and data[name] is not None
+        if spec.get('required') and not present:
+            return 'missing ' + name
+        if not present:
+            continue
+        t = spec.get('type')
+        py = types.get(t)
+        if t == 'integer' and isinstance(data[name], bool):
+            return name + ' type'
+        if py and not isinstance(data[name], py):
+            return name + ' type'
+        if t == 'string' and spec.get('maxLength') is not None and len(data[name]) > spec['maxLength']:
+            return name + ' length'
+        if t in ('integer', 'number'):
+            if spec.get('minimum') is not None and data[name] < spec['minimum']:
+                return name + ' range'
+            if spec.get('maximum') is not None and data[name] > spec['maximum']:
+                return name + ' range'
+    return None
+
+
 def cmd_manifest(dry):
     f, p = family(), manifest_path()
     m = json.load(open(p)); cols = m['collections']; old = CFG['picksCollection']
     if old not in cols: sys.exit('old picks collection is not in the manifest')
     base = json.loads(json.dumps(cols[old]))
     live = dict(base, access={'read': 'public', 'insert': 'public', 'update': 'owner', 'delete': 'owner'})
+    apply_live_tag_schema(live)
     arch = json.loads(json.dumps(base)); arch['fields']['oc'] = {'type': 'number', 'minimum': 0}; arch['fields']['src'] = {'type': 'string', 'maxLength': 40}
     arch['access'] = {'read': 'public', 'insert': 'owner', 'update': 'owner', 'delete': 'owner'}; arch.pop('rateLimit', None)
     cols[f['live']] = live; cols[f['archive']] = arch
@@ -89,9 +131,11 @@ def cmd_manifest(dry):
     if len(cols) > 10: sys.exit('too many collections')
     out = json.dumps(m, indent=2) + '\n'
     if len(out) > 64000: sys.exit('manifest too large')
-    if dry: print(f'manifest OK (dry run): {len(cols)} collections; old picks -> read owner / insert none; feedback untouched'); return
+    if dry:
+        print('manifest OK (dry run): %d collections; live schema adds typ/tags/league/at and makes season, week, picks optional; old picks -> read owner / insert none; archive and feedback untouched' % len(cols))
+        return
     open(p, 'w').write(out)
-    print(f'manifest written: {len(cols)} collections (old picks closed to new writes and public reads; feedback block unchanged)')
+    print(f'manifest written: {len(cols)} collections (live schema updated for typ:tags; old picks closed to new writes and public reads; archive and feedback unchanged)')
 
 
 def cmd_keys():

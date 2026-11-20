@@ -5,7 +5,7 @@ import { setKv, setFamilyKey, fetchSnaps } from '../src/picks/sync';
 import { deriveFamilyKey } from '../src/picks/family';
 import { applyChip, parseChipState, serializeChipState, setTagKv, ChipState } from '../src/tags/store';
 import { enqueueTags, fetchTagSnaps, flushTags, pendingTagCount, snapshotTags, TAGS_TYP } from '../src/tags/sync';
-import { mergeChips, restoreTagsFromServer, restoreTagsMessage, restoreTagsOnStart, saveAndQueueTag, serverSets, snapsFor } from '../src/tags/restore';
+import { mergeChips, restoreTagsFromServer, restoreTagsMessage, restoreTagsOnStart, saveAndQueueTag, serverSets, snapsFor, uploadLocalTags } from '../src/tags/restore';
 import { SITE_ORIGIN as SITE } from '../src/config';
 
 let pass = 0, fail = 0;
@@ -84,6 +84,7 @@ function site(posts: { url: string; body: any; key: string }[], pages: any[][] =
     assert.deepEqual(posts[0].body.tags, { '1001': 'never', '1002': 'high' });
     assert.ok(posts[0].key && posts[0].body.ts === 11);
     assert.equal(JSON.parse(mem['tags:' + LID]).tags['1002'], 'high');
+    assert.ok(!('season' in posts[0].body) && !('week' in posts[0].body) && !('picks' in posts[0].body), 'tag POSTs must omit season, week and picks');
   });
 
   await t('fresh install: empty local picks up the server set for this Sleeper user', async () => {
@@ -156,6 +157,45 @@ function site(posts: { url: string; body: any; key: string }[], pages: any[][] =
     const { hasFamilyKey } = await import('../src/picks/sync');
     assert.equal(hasFamilyKey(), true);
   });
+
+  await t('uploadLocalTags skips a second insert when chips have not changed since the last successful upload', async () => {
+    reset(); setFamilyKey(K);
+    const local = applyChip(empty, '1001', 'never', 10);
+    await saveAndQueueTag(LID, ME, local);
+    const posts: { url: string; body: any; key: string }[] = [];
+    const first = await flushTags(site(posts));
+    assert.equal(first.sent, 1); assert.equal(posts.length, 1);
+    const again = await uploadLocalTags(ME, LID, site(posts));
+    assert.equal(again.skipped, true); assert.equal(again.sent, 0); assert.equal(posts.length, 1);
+    const edited = applyChip(local, '1002', 'high', 20);
+    const { saveChipState } = await import('../src/tags/store');
+    await saveChipState(LID, edited);
+    const changed = await uploadLocalTags(ME, LID, site(posts));
+    assert.equal(changed.skipped, false); assert.equal(changed.sent, 1); assert.equal(posts.length, 2);
+    assert.ok(!('picks' in posts[1].body) && !('season' in posts[1].body) && !('week' in posts[1].body));
+    const third = await uploadLocalTags(ME, LID, site(posts));
+    assert.equal(third.skipped, true); assert.equal(posts.length, 2);
+  });
+
+  await t('restore from the server marks the set uploaded so login does not insert another snapshot', async () => {
+    reset(); setFamilyKey(K);
+    const pages = [[rec({ createdAt: new Date(1_000).toISOString(), data: { tags: { '1001': 'never' }, at: { '1001': 1_000 }, ts: 1_000 } })]];
+    const r = await restoreTagsFromServer(ME, site([], pages));
+    assert.equal(r.status, 'restored');
+    const posts: { url: string; body: any; key: string }[] = [];
+    const up = await uploadLocalTags(ME, LID, site(posts, pages));
+    assert.equal(up.skipped, true); assert.equal(up.sent, 0); assert.equal(posts.length, 0);
+  });
+
+  await t('an unpadded typ:tags record is ignored by a v0.0.14-style picks clean (no typ check)', () => {
+    // Shipped clients do not check typ. Omitting season/week means Number(season) is NaN, so
+    // fetchSnaps' `s.season === season` keeps the record out of the board.
+    const d = { app: 'gg', typ: 'tags', uid: ME.uid, un: 'mockusera', league: LID, tags: { '1001': 'never' }, ts: 1 };
+    const season = Number((d as any).season);
+    assert.equal(Number.isFinite(season), false);
+    assert.notEqual(season, 2026);
+  });
+
 
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);

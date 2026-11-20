@@ -2,7 +2,7 @@
 // Records use typ:'tags' so pick resolve() ignores them. Same family key, Origin, and Idempotency-Key.
 // No new collection. Without the family password, chips stay on the phone.
 import { familyLiveUrl, FLUSH_TIMEOUT_MS, hasFamilyKey, SITE } from '../picks/sync';
-import { Chip, ChipState, tagKv, validChipId, validLeagueId } from './store';
+import { Chip, ChipState, markUploaded, tagKv, validChipId, validLeagueId } from './store';
 
 const APP = 'gg';
 export const TAGS_TYP = 'tags';
@@ -59,6 +59,8 @@ export async function flushTags(fetcher: typeof fetch = fetch, opts?: { timeoutM
         r = await fetchWithTimeout(fetcher, url, {
           method: 'POST',
           headers: { 'content-type': 'application/json', Origin: SITE, 'Idempotency-Key': s.key },
+          // Must omit season, week and picks. Shipped v0.0.12 / v0.0.14 clients do not check typ;
+          // a padded empty-picks record could look like a complete week and clear on-time picks.
           body: JSON.stringify({ app: APP, typ: TAGS_TYP, uid: s.uid, un: s.un, av: s.av || undefined, league: s.league, tags: s.tags, at: s.at, ts: s.ts }),
         }, timeoutMs);
       } catch (e: any) {
@@ -69,7 +71,10 @@ export async function flushTags(fetcher: typeof fetch = fetch, opts?: { timeoutM
       if (!r.ok && r.status >= 500) { error = 'server error ' + r.status; break; }
       // 4xx other than 429, including 401: drop this snapshot. 401 does not change the family key.
       if (!r.ok) error = 'rejected ' + r.status;
-      else sent++;
+      else {
+        sent++;
+        await markUploaded(s.uid, s.league, { tags: s.tags, at: s.at, ts: s.ts });
+      }
       q = (await getQueue()).filter(x => x.key !== s.key);
       await setQueue(q);
     }
