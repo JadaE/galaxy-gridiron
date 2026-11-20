@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, Text, useWindowDimensions, Pressable } from 'react-native';
 import { Screen, Card, useApp, T, Head, Pos, TagChips } from '../ui';
 import { C, posColor } from '../theme';
@@ -18,6 +18,7 @@ export default function Trades() {
   const { width } = useWindowDimensions();
   const [involve, setInvolve] = useState<string | null>(null);
   const [openTeam, setOpenTeam] = useState<number | null>(null);
+  useEffect(() => { setInvolve(null); setOpenTeam(null); }, [b.league.league_id]);
   if (b.isPast) return <Screen info="trades" title="Trades"><Card><Text style={T.body}>Trade ideas are for current seasons.</Text></Card></Screen>;
   if (!b.fc) return <Screen info="trades" title="Trades"><Card><Text style={T.body}>Couldn't reach FantasyCalc trade values. Pull down to retry.</Text></Card></Screen>;
   const { ideas, profiles, mine } = tradeIdeas(b, tags, 10, involve ? { involve } : {});
