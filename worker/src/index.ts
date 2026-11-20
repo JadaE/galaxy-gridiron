@@ -1,11 +1,8 @@
 import { PRICES, costUsd, readUsage, round6 } from "./pricing";
 import { SYSTEM_PROMPT } from "./prompt";
-import { type D1Database, reserve, finalize, release, usage as capUsage, toMicros, fromMicros } from "./caps";
 
 export interface Env {
   GG_KV: KVNamespace;
-  // JC-40: D1 database (free plan) that holds the atomic AI caps. See caps.ts.
-  GG_DB?: D1Database;
   // Secrets (set ONLY with `wrangler secret put`):
   OPENAI_API_KEY?: string;
   PAIRING_CODE?: string;
@@ -32,7 +29,6 @@ type ErrorCode =
   | "rate_limited"
   | "device_limit"
   | "not_configured"
-  | "unavailable"
   | "not_found";
 
 export const LIMITS = {
@@ -81,12 +77,12 @@ export async function safeEqual(a: string, b: string): Promise<boolean> {
   for (let i = 0; i < x.length; i++) diff |= x[i] ^ y[i];
   return diff === 0;
 }
-function randomToken(prefix = "gg_"): string {
+function randomToken(): string {
   const b = new Uint8Array(32);
   crypto.getRandomValues(b);
   let s = "";
   for (const x of b) s += String.fromCharCode(x);
-  return prefix + btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  return "gg_" + btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 function intVar(v: string | undefined, def: number): number {
   const n = Number(v);
@@ -147,23 +143,15 @@ async function authDevice(req: Request, env: Env): Promise<{ hash: string; devic
   return { hash, deviceName };
 }
 
-/** Old KV counters, read only to seed D1 once (rows that don't exist yet), so a mid-month cut-over keeps the spend. */
-async function kvSeeds(env: Env, hash: string, p: { month: string; day: string }) {
-  const [monthSpendUsd, dailyCount] = await Promise.all([kvNum(env, `spend:${p.month}`), kvNum(env, `daily:${hash}:${p.day}`)]);
-  return { seedMonthMicros: toMicros(monthSpendUsd), seedDaily: dailyCount };
-}
-
 async function usageFor(env: Env, hash: string, now: Date) {
   const c = cfg(env);
   const p = localParts(now, c.tz);
-  if (!env.GG_DB) throw new CapsDown();
-  const seeds = await kvSeeds(env, hash, p);
-  let u;
-  try { u = await capUsage(env.GG_DB, hash, p.day, p.month, seeds.seedDaily, seeds.seedMonthMicros); } catch { throw new CapsDown(); }
-  return { monthSpendUsd: fromMicros(u.monthMicros), monthCapUsd: c.monthCap, dailyCount: u.dailyCount, dailyLimit: c.dailyLimit };
+  const [monthSpendUsd, dailyCount] = await Promise.all([
+    kvNum(env, `spend:${p.month}`),
+    kvNum(env, `daily:${hash}:${p.day}`),
+  ]);
+  return { monthSpendUsd: round6(monthSpendUsd), monthCapUsd: c.monthCap, dailyCount, dailyLimit: c.dailyLimit, parts: p };
 }
-class CapsDown extends Error {}
-const capsDown = () => err("unavailable", "The AI budget counter is unavailable right now, so AI chat is paused. Rules chat still works.", 503);
 
 // ---------- routes ----------
 async function pair(req: Request, env: Env, now: Date): Promise<Response> {
@@ -253,6 +241,19 @@ async function chat(req: Request, env: Env, now: Date): Promise<Response> {
   const model = (v.tier === "budget" ? env.BUDGET_MODEL : env.BETTER_MODEL) || tierCfg.defaultModel;
   if (!PRICES[model]) return err("not_configured", `No price on file for model ${model}; refusing so spend stays tracked.`, 503);
 
+  // --- caps are checked BEFORE any upstream call ---
+  const u = await usageFor(env, auth.hash, now);
+  if (u.monthSpendUsd >= u.monthCapUsd) {
+    return json({ error: "cap_reached", message: `Monthly AI budget of $${u.monthCapUsd.toFixed(2)} reached. Rules chat still works.`, ...stripParts(u) }, 429);
+  }
+  if (u.dailyCount >= u.dailyLimit) {
+    return json({ error: "daily_limit", message: `Daily limit of ${u.dailyLimit} AI questions reached on this device. Resets at midnight.`, ...stripParts(u) }, 429);
+  }
+  // Reserve the question now (stops runaway loops); released if the upstream call fails.
+  const dailyKey = `daily:${auth.hash}:${u.parts.day}`;
+  const newCount = u.dailyCount + 1;
+  await env.GG_KV.put(dailyKey, String(newCount), { expirationTtl: 3 * 86400 });
+
   const payload = {
     model,
     instructions: SYSTEM_PROMPT,
@@ -264,40 +265,6 @@ async function chat(req: Request, env: Env, now: Date): Promise<Response> {
     reasoning: { effort: tierCfg.effort },
     store: false,
   };
-  // Worst case for this request (also billed when upstream omits usage). Reserved up front, fail closed.
-  // A token is never shorter than one UTF-8 byte, so input bytes bound the input tokens from above.
-  const worstUsd = costUsd(model, {
-    inputTokens: new TextEncoder().encode(SYSTEM_PROMPT + JSON.stringify(payload.input)).length + 64,
-    cachedTokens: 0,
-    cacheWriteTokens: 0,
-    outputTokens: tierCfg.maxOutputTokens,
-  });
-
-  // --- JC-40: check + count both caps in ONE D1 transaction BEFORE any upstream call ---
-  const c = cfg(env);
-  const parts = localParts(now, c.tz);
-  const db = env.GG_DB;
-  if (!db) return capsDown();
-  let rsv;
-  try {
-    const seeds = await kvSeeds(env, auth.hash, parts);
-    rsv = await reserve(db, {
-      id: randomToken("r_"), dev: auth.hash, day: parts.day, month: parts.month, micros: toMicros(worstUsd),
-      dailyLimit: c.dailyLimit, capMicros: toMicros(c.monthCap), now: now.getTime(), ...seeds,
-    });
-  } catch { return capsDown(); }
-  const u = { monthSpendUsd: fromMicros(rsv.monthMicros), monthCapUsd: c.monthCap, dailyCount: rsv.dailyCount, dailyLimit: c.dailyLimit };
-  if (!rsv.ok) {
-    if (rsv.reason === "daily_limit") {
-      return json({ error: "daily_limit", message: `Daily limit of ${u.dailyLimit} AI questions reached on this device. Resets at midnight.`, ...u }, 429);
-    }
-    return json({ error: "cap_reached", message: `Monthly AI budget of $${u.monthCapUsd.toFixed(2)} reached. Rules chat still works.`, ...u }, 429);
-  }
-  const rid = rsv.id;
-  const released = async () => {
-    try { await release(db, rid); } catch {}
-    try { return await usageFor(env, auth.hash, now); } catch { return u; }
-  };
 
   let data: any;
   try {
@@ -308,7 +275,7 @@ async function chat(req: Request, env: Env, now: Date): Promise<Response> {
     });
     data = await res.json().catch(() => null);
     if (!res.ok) {
-      const after = await released();
+      await env.GG_KV.put(dailyKey, String(u.dailyCount), { expirationTtl: 3 * 86400 });
       const code = data?.error?.code || data?.error?.type || `http_${res.status}`;
       const friendly =
         /credit_balance|insufficient_quota|spend_limit|billing/i.test(String(code))
@@ -316,20 +283,25 @@ async function chat(req: Request, env: Env, now: Date): Promise<Response> {
           : res.status === 429
             ? "The AI provider is busy. Try again in a minute."
             : "The AI provider returned an error.";
-      return json({ error: "upstream", message: `${friendly} (${code})`, ...after }, 502);
+      return json({ error: "upstream", message: `${friendly} (${code})`, ...stripParts({ ...u, dailyCount: u.dailyCount }) }, 502);
     }
   } catch {
-    return json({ error: "upstream", message: "Couldn't reach the AI provider.", ...(await released()) }, 502);
+    await env.GG_KV.put(dailyKey, String(u.dailyCount), { expirationTtl: 3 * 86400 });
+    return json({ error: "upstream", message: "Couldn't reach the AI provider.", ...stripParts(u) }, 502);
   }
 
   const usage = readUsage(data?.usage);
   // If usage is missing, bill the worst case for this request so the cap stays conservative.
-  const cost = usage ? costUsd(model, usage) : worstUsd;
-  let monthSpendUsd = round6(u.monthSpendUsd - worstUsd + cost);
-  try {
-    await finalize(db, rid, toMicros(cost));
-    monthSpendUsd = (await usageFor(env, auth.hash, now)).monthSpendUsd;
-  } catch {} // if settling fails the worst case stays billed (fail closed)
+  const cost = usage
+    ? costUsd(model, usage)
+    : costUsd(model, {
+        inputTokens: Math.ceil((SYSTEM_PROMPT.length + JSON.stringify(payload.input).length) / 2),
+        cachedTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: tierCfg.maxOutputTokens,
+      });
+  const monthSpendUsd = round6(u.monthSpendUsd + cost);
+  await env.GG_KV.put(`spend:${u.parts.month}`, String(monthSpendUsd), { expirationTtl: 120 * 86400 });
 
   let reply = extractText(data);
   if (!reply) {
@@ -342,16 +314,21 @@ async function chat(req: Request, env: Env, now: Date): Promise<Response> {
     costUsd: cost,
     monthSpendUsd,
     monthCapUsd: u.monthCapUsd,
-    dailyCount: u.dailyCount,
+    dailyCount: newCount,
     dailyLimit: u.dailyLimit,
     model,
   });
 }
 
+function stripParts<T extends { parts?: unknown }>(u: T) {
+  const { parts, ...rest } = u;
+  return rest;
+}
+
 async function usage(req: Request, env: Env, now: Date): Promise<Response> {
   const auth = await authDevice(req, env);
   if (auth instanceof Response) return auth;
-  try { return json(await usageFor(env, auth.hash, now)); } catch (e) { if (e instanceof CapsDown) return capsDown(); throw e; }
+  return json(stripParts(await usageFor(env, auth.hash, now)));
 }
 
 export async function handle(req: Request, env: Env, now = new Date()): Promise<Response> {
