@@ -201,7 +201,7 @@ export function tradeIdeas(b: Bundle, tags: Tags, limit = 10, opts: TradeOpts = 
       const helpsMe = getPos.some(p => mine.needs.includes(p) || mine.rel[p] < 1);
       const helpsThem = givePos.some(p => prof.needs.includes(p) || prof.rel[p] < 1);
       if (!helpsMe || !helpsThem) return;
-      for (const p of getPos) if (startableCount(myAfter, p) < Math.min(needed(p), startableCount(b.me.players, p)) && onBye(b, get.find(id => ppos(b, id) === p) || '')) return;
+      for (const p of getPos) if (startableCount(myAfter, p) < Math.min(needed(p), startableCount(b.me.players, p)) && get.some(id => ppos(b, id) === p && onBye(b, id))) return;
       for (const p of givePos) if (startableCount(theirAfter, p) < Math.min(needed(p), startableCount(prof.t.players, p)) && give.some(id => ppos(b, id) === p && onBye(b, id))) return;
       const fromSurplus = getPos.some(p => prof.surplus.includes(p));
       const why: string[] = [];

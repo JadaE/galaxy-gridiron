@@ -14,8 +14,8 @@ function teamOf(rid: number, display: string, name: string, roster: Record<strin
   return { rid, display, name, wins: 4, losses: 4, ties: 0, players: Object.keys(roster), starters: Object.keys(roster).slice(0, 9), reserve: [] };
 }
 
-function league(mine: Record<string, Spec>, other: Record<string, Spec>, week = 8, byes: Record<string, number> = {}): Bundle {
-  const all = { ...mine, ...other };
+function league(mine: Record<string, Spec>, other: Record<string, Spec>, week = 8, byes: Record<string, number> = {}, extra: Record<string, Spec>[] = []): Bundle {
+  const all = Object.assign({}, mine, other, ...extra);
   const players: any = {}, fc: Record<string, number> = {}, vals: Record<string, Spec> = {};
   for (const id of Object.keys(all)) {
     const s = all[id];
@@ -30,10 +30,13 @@ function league(mine: Record<string, Spec>, other: Record<string, Spec>, week = 
   } };
   const me = teamOf(1, 'mockusera', 'River Otters', mine);
   const them = teamOf(2, 'mockuserb', 'Pine Badgers', other);
+  const more = extra.map((roster, i) => teamOf(i + 3, `mockuser${i + 3}`, `Summit Wolves ${i + 3}`, roster));
+  const teams = [me, them, ...more];
+  const byRid = Object.fromEntries(teams.map(tm => [tm.rid, tm]));
   return {
-    slots: SLOTS, players, fc, valuer, si: 0, me, teams: [me, them], byRid: { 1: me, 2: them },
+    slots: SLOTS, players, fc, valuer, si: 0, me, teams, byRid,
     isPast: false, week, proj: {}, trending: [], tx: [], sched: { byes, opp: {} },
-    league: { settings: {}, roster_positions: [...SLOTS, 'BN', 'BN', 'BN'], total_rosters: 2, name: 'Mock League' },
+    league: { settings: {}, roster_positions: [...SLOTS, 'BN', 'BN', 'BN'], total_rosters: teams.length, name: 'Mock League' },
     practice: {}, games: null, allowed: {},
   } as any;
 }
@@ -129,6 +132,60 @@ const THEM: Record<string, Spec> = {
     const vVet = tradeValue(b2, 'wr1'), vFlash = tradeValue(b2, 'np');
     assert.ok(vVet > vFlash, `veteran ${vVet.toFixed(0)} should outrank same-market flash ${vFlash.toFixed(0)}`);
     assert.equal(lineupFC(b, ['cr', 'mq'], id => b.fc![id] || 0) > 0, true);
+  });
+
+  // 2-for-2 WR swap used to check only get.find (the first incoming WR). A later WR on bye
+  // can still drop startable WR count below what's needed. Summit Wolves exist only to
+  // lift the league WR average so both sides can have a WR need while the Badgers still
+  // have WR depth. Other Otters players are 🔒 so this pair is the only giveable idea.
+  const HOLE_MINE: Record<string, Spec> = {
+    qb1: { name: 'Quinn Avery', pos: 'QB', team: 'CHI', fc: 4000, pts: 18 },
+    cr:  { name: 'Cole Rivers', pos: 'RB', team: 'CHI', fc: 5000, pts: 16.2 },
+    mq:  { name: 'Mara Quinn', pos: 'RB', team: 'DET', fc: 3500, pts: 13.1 },
+    rb3: { name: 'Owen Pike', pos: 'RB', team: 'GB', fc: 2000, pts: 8.4 },
+    wr1: { name: 'Lila Shaw', pos: 'WR', team: 'CHI', fc: 4000, pts: 14.0 },
+    wr2: { name: 'Eden Brooks', pos: 'WR', team: 'MIN', fc: 1500, pts: 6.5 },
+    te1: { name: 'Sam Ortiz', pos: 'TE', team: 'CHI', fc: 2000, pts: 8.0 },
+    k1:  { name: 'Kicker A', pos: 'K', team: 'CHI', fc: 200, pts: 7 },
+    d1:  { name: 'Defense A', pos: 'DEF', team: 'CHI', fc: 200, pts: 7 },
+  };
+  const HOLE_THEM: Record<string, Spec> = {
+    qb2: { name: 'Blair James', pos: 'QB', team: 'NE', fc: 4000, pts: 18 },
+    rbA: { name: 'Hugo Bell', pos: 'RB', team: 'NE', fc: 2500, pts: 9.1 },
+    rbB: { name: 'Chris Vale', pos: 'RB', team: 'NYJ', fc: 1500, pts: 6.2 },
+    tv:  { name: 'Theo Voss', pos: 'WR', team: 'NE', fc: 8000, pts: 20.0 },
+    np:  { name: 'Nia Park', pos: 'WR', team: 'SEA', fc: 2800, pts: 11.0 },
+    wrD: { name: 'Remy Cole', pos: 'WR', team: 'LAR', fc: 2700, pts: 10.5 },
+    te2: { name: 'Pat Elms', pos: 'TE', team: 'NE', fc: 2000, pts: 8.0 },
+    k2:  { name: 'Kicker B', pos: 'K', team: 'NE', fc: 200, pts: 7 },
+    d2:  { name: 'Defense B', pos: 'DEF', team: 'NE', fc: 200, pts: 7 },
+  };
+  const HOLE_T3: Record<string, Spec> = {
+    t3qb: { name: 'T3 QB', pos: 'QB', team: 'KC', fc: 4000, pts: 18 },
+    t3rb1: { name: 'T3 RB1', pos: 'RB', team: 'KC', fc: 4000, pts: 14 },
+    t3rb2: { name: 'T3 RB2', pos: 'RB', team: 'KC', fc: 3500, pts: 12 },
+    t3wr1: { name: 'T3 WR1', pos: 'WR', team: 'KC', fc: 9000, pts: 22 },
+    t3wr2: { name: 'T3 WR2', pos: 'WR', team: 'KC', fc: 9000, pts: 22 },
+    t3te: { name: 'T3 TE', pos: 'TE', team: 'KC', fc: 2000, pts: 8 },
+    t3k: { name: 'T3 K', pos: 'K', team: 'KC', fc: 200, pts: 7 },
+    t3d: { name: 'T3 DEF', pos: 'DEF', team: 'KC', fc: 200, pts: 7 },
+  };
+  const onlyWrs: Record<string, 'never'> = { qb1: 'never', cr: 'never', mq: 'never', rb3: 'never', te1: 'never' };
+  const twoForTwo = (ideas: { give: string[]; get: string[] }[]) =>
+    ideas.find(i => i.give.length === 2 && i.get.length === 2 && i.give.includes('wr1') && i.give.includes('wr2') && i.get.includes('np') && i.get.includes('wrD'));
+
+  await t('a bye that opens a startable-position hole omits the idea (2-for-2, later incoming player)', () => {
+    const open = league(HOLE_MINE, HOLE_THEM, 8, {}, [HOLE_T3]);
+    assert.ok(twoForTwo(tradeIdeas(open, onlyWrs, 12).ideas), 'baseline without a bye should still offer Lila + Eden for Nia + Remy');
+    const hole = league(HOLE_MINE, HOLE_THEM, 8, { LAR: 8 }, [HOLE_T3]);
+    assert.equal(twoForTwo(tradeIdeas(hole, onlyWrs, 12).ideas), undefined);
+  });
+
+  await t('a bye that does not open a hole is still allowed and noted', () => {
+    const b2 = league(MINE, THEM, 8, { SEA: 8 });
+    const even = tradeIdeas(b2, {}, 12).ideas.find(i => i.give.includes('mq') && i.get.includes('np') && i.give.length === 1 && i.get.length === 1);
+    assert.ok(even, 'Mara Quinn ⇄ Nia Park should still be suggested when Nia is on bye but no WR hole opens');
+    assert.match(even!.note || '', /Nia Park is on bye this week/);
   });
 
   console.log(`\n${pass} passed, ${fail} failed`);
