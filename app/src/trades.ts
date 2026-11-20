@@ -145,9 +145,10 @@ function ptsLabel(b: Bundle, id: string): string {
   return `${name} (${pts.toFixed(1)} pts/g${prior})`;
 }
 
-export type TradeOpts = { noHigh?: boolean; noStarters?: boolean };
+export type TradeOpts = { noHigh?: boolean; noStarters?: boolean; involve?: string };
 /** 🔒 Will-not-trade players are never offered. opts.noHigh also keeps 💎 personal-high-value players out,
- * opts.noStarters keeps her current starters out. */
+ * opts.noStarters keeps her current starters out. opts.involve keeps only ideas that give or get that player
+ * (same fairness, need, bye-hole, and Out rules as the general list). */
 export function tradeIdeas(b: Bundle, tags: Tags, limit = 10, opts: TradeOpts = {}) {
   if (!b.fc) return { ideas: [] as Idea[], profiles: [] as TeamProfile[], mine: null as TeamProfile | null };
   const scale = productionScale(b);
@@ -240,13 +241,19 @@ export function tradeIdeas(b: Bundle, tags: Tags, limit = 10, opts: TradeOpts = 
   const seen = new Set<string>(), perTeam: Record<number, number> = {}, used: Record<string, number> = {}, gotUsed: Record<string, number> = {};
   const out: Idea[] = [];
   const keyOf = (i: Idea) => i.get.slice().sort().join(',') + '|' + i.give.slice().sort().join(',');
-  const pool = ideas.filter(i => { const k = keyOf(i); if (seen.has(k)) return false; seen.add(k); return true; });
+  const focus = opts.involve;
+  const pool = ideas.filter(i => {
+    const k = keyOf(i); if (seen.has(k)) return false; seen.add(k);
+    if (focus && !i.give.includes(focus) && !i.get.includes(focus)) return false;
+    return true;
+  });
+  const teamCap = focus ? 5 : 2;
   const eff = (i: Idea) => i.score * Math.pow(0.55, Math.max(0, ...i.give.map(g => used[g] || 0))) * Math.pow(0.7, Math.max(0, ...i.get.map(g => gotUsed[g] || 0))) * Math.pow(0.8, perTeam[i.team.rid] || 0);
   while (out.length < limit) {
     let best: Idea | null = null, bs = -Infinity;
     for (const i of pool) {
       if (out.includes(i)) continue;
-      if ((perTeam[i.team.rid] || 0) >= 2 || i.give.some(g => (used[g] || 0) >= MAX_GIVE_USES)) continue;
+      if ((perTeam[i.team.rid] || 0) >= teamCap || i.give.some(g => g !== focus && (used[g] || 0) >= MAX_GIVE_USES)) continue;
       const e = eff(i); if (e > bs) { bs = e; best = i; }
     }
     if (!best) break;

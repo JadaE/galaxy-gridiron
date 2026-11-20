@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { View, Text, useWindowDimensions, Pressable } from 'react-native';
 import { Screen, Card, useApp, T, Head, Pos, TagChips } from '../ui';
 import { C, posColor } from '../theme';
@@ -11,13 +11,28 @@ const NeedChip = ({ p, kind }: { p: string; kind: 'need' | 'surplus' }) => (
   </View>
 );
 
+const SKILL = ['QB', 'RB', 'WR', 'TE'];
+
 export default function Trades() {
   const { b, openPlayer, tags } = useApp();
   const { width } = useWindowDimensions();
+  const [involve, setInvolve] = useState<string | null>(null);
+  const [openTeam, setOpenTeam] = useState<number | null>(null);
   if (b.isPast) return <Screen info="trades" title="Trades"><Card><Text style={T.body}>Trade ideas are for current seasons.</Text></Card></Screen>;
   if (!b.fc) return <Screen info="trades" title="Trades"><Card><Text style={T.body}>Couldn't reach FantasyCalc trade values. Pull down to retry.</Text></Card></Screen>;
-  const { ideas, profiles, mine } = tradeIdeas(b, tags);
+  const { ideas, profiles, mine } = tradeIdeas(b, tags, 10, involve ? { involve } : {});
   const fc = b.fc;
+  const skillOf = (ids: string[]) => ids.filter(id => SKILL.includes(ppos(b, id))).sort((x, y) => (fc[y] || 0) - (fc[x] || 0));
+  const pickChip = (id: string) => {
+    const on = involve === id;
+    return (
+      <Pressable key={id} onPress={() => setInvolve(on ? null : id)} accessibilityRole="button" accessibilityState={{ selected: on }} accessibilityLabel={`${on ? 'Clear' : 'See trades involving'} ${pname(b, id)}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 5, paddingHorizontal: 8, paddingVertical: 5, borderRadius: 10, borderWidth: 1, borderColor: on ? C.mint : C.border, backgroundColor: on ? C.mintSoft : C.card2 }}>
+        <Head id={id} size={18} />
+        <Text style={{ color: on ? C.mint : C.text, fontSize: 12, fontWeight: '700', flexShrink: 1 }} numberOfLines={1}>{pname(b, id)}</Text>
+        <Pos p={ppos(b, id)} />
+      </Pressable>
+    );
+  };
   const pp = (id: string) => (
     <Pressable key={id} onPress={() => openPlayer(id)} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 3 }}>
       <Head id={id} size={24} />
@@ -47,7 +62,26 @@ export default function Trades() {
         <Text style={[T.sub, { marginTop: 6 }]}>Starter value vs the league average. The center line is average.</Text>
       </Card>
 
-      <Text style={{ color: C.text, fontSize: 17, fontWeight: '800', marginTop: 4 }}>💫 Trade ideas</Text>
+      <Card title="See trades for a player" emoji="🎯" accent={involve ? C.mint : C.purple} right={involve ? <Pressable onPress={() => setInvolve(null)} accessibilityRole="button" accessibilityLabel="Clear player and show general trade ideas"><Text style={{ color: C.mint, fontSize: 12, fontWeight: '800' }}>Clear</Text></Pressable> : undefined}>
+        <Text style={[T.sub, { marginBottom: 8 }]}>{involve ? `Showing only realistic trades that involve ${pname(b, involve)}.` : 'Pick a player on your roster or another team to see only the trades that involve them.'}</Text>
+        <Text style={{ color: C.sub, fontSize: 11, fontWeight: '800', marginBottom: 5 }}>YOUR ROSTER</Text>
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6 }}>{skillOf(b.me.players).map(pickChip)}</View>
+        <Text style={{ color: C.sub, fontSize: 11, fontWeight: '800', marginTop: 10, marginBottom: 5 }}>OTHER TEAMS</Text>
+        {profiles.filter(p => p.t.rid !== b.me.rid).map(p => {
+          const open = openTeam === p.t.rid || (involve != null && p.t.players.includes(involve));
+          return (
+            <View key={p.t.rid} style={{ marginBottom: 6 }}>
+              <Pressable onPress={() => setOpenTeam(open && openTeam === p.t.rid ? null : p.t.rid)} accessibilityRole="button" accessibilityState={{ expanded: open }} style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 6 }}>
+                <Text style={{ color: C.text, fontSize: 13, fontWeight: '700', flex: 1 }} numberOfLines={1}>{p.t.name} <Text style={{ color: C.sub, fontWeight: '500' }}>· {p.t.wins}-{p.t.losses}</Text></Text>
+                <Text style={{ color: C.dim, fontSize: 12 }}>{open ? '▾' : '▸'}</Text>
+              </Pressable>
+              {open ? <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingBottom: 4 }}>{skillOf(p.t.players).map(pickChip)}</View> : null}
+            </View>
+          );
+        })}
+      </Card>
+
+      <Text style={{ color: C.text, fontSize: 17, fontWeight: '800', marginTop: 4 }}>{involve ? `💫 Trades involving ${pname(b, involve)}` : '💫 Trade ideas'}</Text>
       {ideas.length ? ideas.map((x, i) => (
         <Card key={i} title={`Ask ${x.team.display}${famLabel(x.team.display)}`} right={<Text style={{ color: C.mint, fontSize: 11, fontWeight: '800' }}>+{Math.round(x.net)} lineup value</Text>} accent={i === 0 ? C.mint : undefined}>
           <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -65,7 +99,12 @@ export default function Trades() {
           {x.fairness ? <Text style={[T.sub, { marginTop: 4 }]}>{x.fairness}</Text> : null}
           {x.note ? <Text style={{ color: C.gold, fontSize: 11.5, marginTop: 4 }}>⚠️ Heads up: {x.note}.</Text> : null}
         </Card>
-      )) : <Card><Text style={T.body}>No balanced trade ideas found right now. Try un-locking a player or two.</Text></Card>}
+      )) : <Card>
+        <Text style={T.body}>{involve
+          ? `No realistic trades found involving ${pname(b, involve)} right now. Ideas have to be fairly valued and fill a need on both sides.`
+          : 'No balanced trade ideas found right now. Try un-locking a player or two.'}</Text>
+        {involve ? <Pressable onPress={() => setInvolve(null)} accessibilityRole="button" accessibilityLabel="Clear player and show general trade ideas" style={{ alignSelf: 'flex-start', marginTop: 10, paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10, borderWidth: 1, borderColor: C.mint }}><Text style={{ color: C.mint, fontSize: 13, fontWeight: '800' }}>Show general trade ideas</Text></Pressable> : null}
+      </Card>}
 
       <Card title="Your trade chips" emoji="🏷️" right={<Text style={T.sub}>tap to tag</Text>}>
         <Text style={[T.sub, { marginBottom: 6 }]}>🔒 = never included in ideas. 💎 = only offered when you get back at least {Math.round(HIGH_PREMIUM * 100)}% of market value. Tags are saved on this phone for this league.</Text>
@@ -91,7 +130,16 @@ export default function Trades() {
                 <Text style={{ color: C.sub, fontSize: 11 }}>Needs</Text>{p.needs.map(n => <NeedChip key={n} p={n} kind="need" />)}
                 <Text style={{ color: C.sub, fontSize: 11, marginLeft: 8 }}>Extra</Text>{p.surplus.length ? p.surplus.map(n => <NeedChip key={n} p={n} kind="surplus" />) : <Text style={{ color: C.dim, fontSize: 11 }}>none</Text>}
               </View>
-              {askFor.length ? <Text style={{ color: C.dim, fontSize: 11, marginTop: 4 }}>Could ask about: {askFor.map(id => pname(b, id)).join(', ')}</Text> : null}
+              {askFor.length ? (
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', marginTop: 4, gap: 4 }}>
+                  <Text style={{ color: C.dim, fontSize: 11 }}>Could ask about:</Text>
+                  {askFor.map(id => (
+                    <Pressable key={id} onPress={() => setInvolve(id)} accessibilityRole="button" accessibilityLabel={`See trades involving ${pname(b, id)}`}>
+                      <Text style={{ color: involve === id ? C.mint : C.sub, fontSize: 11, fontWeight: '700', textDecorationLine: 'underline' }}>{pname(b, id)}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              ) : null}
             </View>
           );
         })}

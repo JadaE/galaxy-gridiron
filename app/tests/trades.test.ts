@@ -188,6 +188,46 @@ const THEM: Record<string, Spec> = {
     assert.match(even!.note || '', /Nia Park is on bye this week/);
   });
 
+  await t('selecting a roster player returns only realistic ideas that include them', () => {
+    const { ideas: focused } = tradeIdeas(b, {}, 12, { involve: 'mq' });
+    assert.ok(focused.length > 0, 'expected ideas involving Mara Quinn');
+    for (const i of focused) {
+      assert.ok(i.give.includes('mq') || i.get.includes('mq'), i.give + '=>' + i.get);
+      const r = i.giveV / i.getV;
+      assert.ok(r >= FAIR_MIN && r <= FAIR_MAX, `ratio ${r}`);
+    }
+    assert.ok(focused.some(i => i.give.includes('mq') && i.get.includes('np') && i.give.length === 1 && i.get.length === 1));
+  });
+
+  await t('selecting a player on another team returns only realistic ideas that get them', () => {
+    const { ideas: focused } = tradeIdeas(b, {}, 12, { involve: 'np' });
+    assert.ok(focused.length > 0, 'expected ideas involving Nia Park');
+    for (const i of focused) assert.ok(i.get.includes('np') || i.give.includes('np'));
+    assert.ok(focused.every(i => i.get.includes('np')));
+  });
+
+  await t('no realistic deal for a selected player yields an empty list', () => {
+    assert.equal(tradeIdeas(b, {}, 12, { involve: 'd1' }).ideas.length, 0); // defense is not in the skill-position idea pool
+    const hurt = league(MINE, { ...THEM, np: { ...THEM.np, inj: 'Out' } });
+    assert.equal(tradeIdeas(hurt, {}, 12, { involve: 'np' }).ideas.length, 0);
+    const locked = tradeIdeas(b, { mq: 'never' }, 12, { involve: 'mq' }).ideas;
+    assert.equal(locked.length, 0);
+  });
+
+  await t('player-specific ideas still exclude unrealistic, Out, and bye-hole deals', () => {
+    const { ideas: forAce } = tradeIdeas(b, {}, 12, { involve: 'tv' });
+    for (const i of forAce) {
+      assert.ok(!(i.get.includes('tv') && i.give.length >= 2), 'bundled ask for Theo Voss');
+      const r = i.giveV / i.getV;
+      assert.ok(r >= FAIR_MIN && r <= FAIR_MAX);
+    }
+    const hole = league(HOLE_MINE, HOLE_THEM, 8, { LAR: 8 }, [HOLE_T3]);
+    const onlyWrsLocal: Record<string, 'never'> = { qb1: 'never', cr: 'never', mq: 'never', rb3: 'never', te1: 'never' };
+    const focused = tradeIdeas(hole, onlyWrsLocal, 12, { involve: 'wrD' }).ideas;
+    assert.equal(twoForTwo(focused), undefined);
+    assert.ok(!focused.some(i => i.get.includes('wrD') && i.get.includes('np') && i.give.includes('wr1') && i.give.includes('wr2')));
+  });
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);
 })();
