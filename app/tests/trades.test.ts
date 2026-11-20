@@ -188,6 +188,81 @@ const THEM: Record<string, Spec> = {
     assert.match(even!.note || '', /Nia Park is on bye this week/);
   });
 
+  await t('selecting a roster player returns only realistic ideas that include them', () => {
+    const { ideas: focused } = tradeIdeas(b, {}, 12, { involve: 'mq' });
+    assert.ok(focused.length > 0, 'expected ideas involving Mara Quinn');
+    for (const i of focused) {
+      assert.ok(i.give.includes('mq') || i.get.includes('mq'), i.give + '=>' + i.get);
+      const r = i.giveV / i.getV;
+      assert.ok(r >= FAIR_MIN && r <= FAIR_MAX, `ratio ${r}`);
+    }
+    assert.ok(focused.some(i => i.give.includes('mq') && i.get.includes('np') && i.give.length === 1 && i.get.length === 1));
+  });
+
+  await t('selecting a player on another team returns only realistic ideas that get them', () => {
+    const { ideas: focused } = tradeIdeas(b, {}, 12, { involve: 'np' });
+    assert.ok(focused.length > 0, 'expected ideas involving Nia Park');
+    for (const i of focused) assert.ok(i.get.includes('np') || i.give.includes('np'));
+    assert.ok(focused.every(i => i.get.includes('np')));
+  });
+
+  await t('no realistic deal for a selected player yields an empty list', () => {
+    assert.equal(tradeIdeas(b, {}, 12, { involve: 'd1' }).ideas.length, 0); // defense is not in the skill-position idea pool
+    const hurt = league(MINE, { ...THEM, np: { ...THEM.np, inj: 'Out' } });
+    assert.equal(tradeIdeas(hurt, {}, 12, { involve: 'np' }).ideas.length, 0);
+    const locked = tradeIdeas(b, { mq: 'never' }, 12, { involve: 'mq' }).ideas;
+    assert.equal(locked.length, 0);
+  });
+
+  await t('player-specific ideas still exclude unrealistic, Out, and bye-hole deals', () => {
+    const { ideas: forAce } = tradeIdeas(b, {}, 12, { involve: 'tv' });
+    for (const i of forAce) {
+      assert.ok(!(i.get.includes('tv') && i.give.length >= 2), 'bundled ask for Theo Voss');
+      const r = i.giveV / i.getV;
+      assert.ok(r >= FAIR_MIN && r <= FAIR_MAX);
+    }
+    const hole = league(HOLE_MINE, HOLE_THEM, 8, { LAR: 8 }, [HOLE_T3]);
+    const onlyWrsLocal: Record<string, 'never'> = { qb1: 'never', cr: 'never', mq: 'never', rb3: 'never', te1: 'never' };
+    const focused = tradeIdeas(hole, onlyWrsLocal, 12, { involve: 'wrD' }).ideas;
+    assert.equal(twoForTwo(focused), undefined);
+    assert.ok(!focused.some(i => i.get.includes('wrD') && i.get.includes('np') && i.give.includes('wr1') && i.give.includes('wr2')));
+  });
+
+  await t('a selected player outside the top-8 give pool still appears in a fair 1-for-1', () => {
+    const deep: Record<string, Spec> = {
+      qb1: { name: 'Quinn Avery', pos: 'QB', team: 'CHI', fc: 4000, pts: 18 },
+      cr:  { name: 'Cole Rivers', pos: 'RB', team: 'CHI', fc: 5000, pts: 16.2 },
+      mq:  { name: 'Mara Quinn', pos: 'RB', team: 'DET', fc: 3500, pts: 13.1 },
+      rb3: { name: 'Owen Pike', pos: 'RB', team: 'GB', fc: 2800, pts: 10.0 },
+      rb4: { name: 'Reed Vale', pos: 'RB', team: 'SF', fc: 2700, pts: 9.6 },
+      rb5: { name: 'Brooke Nash', pos: 'RB', team: 'ATL', fc: 2600, pts: 9.3 },
+      rb6: { name: 'Drew Holm', pos: 'RB', team: 'DEN', fc: 2500, pts: 9.0 },
+      teH: { name: 'Micah Stern', pos: 'TE', team: 'CHI', fc: 3000, pts: 11.0 },
+      jl:  { name: 'Juniper Low', pos: 'TE', team: 'NO', fc: 2100, pts: 8.2 },
+      wr1: { name: 'Lila Shaw', pos: 'WR', team: 'CHI', fc: 2800, pts: 10.2 },
+      wr2: { name: 'Eden Brooks', pos: 'WR', team: 'MIN', fc: 1800, pts: 7.5 },
+      k1:  { name: 'Kicker A', pos: 'K', team: 'CHI', fc: 200, pts: 7 },
+      d1:  { name: 'Defense A', pos: 'DEF', team: 'CHI', fc: 200, pts: 7 },
+    };
+    const other: Record<string, Spec> = {
+      qb2: { name: 'Blair James', pos: 'QB', team: 'NE', fc: 4000, pts: 18 },
+      rbA: { name: 'Hugo Bell', pos: 'RB', team: 'NE', fc: 4000, pts: 14.0 },
+      rbB: { name: 'Chris Vale', pos: 'RB', team: 'NYJ', fc: 3000, pts: 11.0 },
+      tv:  { name: 'Theo Voss', pos: 'WR', team: 'NE', fc: 5500, pts: 17.8 },
+      np:  { name: 'Nia Park', pos: 'WR', team: 'SEA', fc: 2100, pts: 8.2 },
+      wrD: { name: 'Remy Cole', pos: 'WR', team: 'LAR', fc: 1800, pts: 7.2 },
+      te2: { name: 'Pat Elms', pos: 'TE', team: 'NE', fc: 800, pts: 4.0 },
+      k2:  { name: 'Kicker B', pos: 'K', team: 'NE', fc: 200, pts: 7 },
+      d2:  { name: 'Defense B', pos: 'DEF', team: 'NE', fc: 200, pts: 7 },
+    };
+    const b2 = league(deep, other);
+    const oneForOne = (ideas: { give: string[]; get: string[] }[]) => ideas.find(i => i.give.includes('jl') && i.get.includes('np') && i.give.length === 1 && i.get.length === 1);
+    assert.equal(oneForOne(tradeIdeas(b2, {}, 12).ideas), undefined, 'general list should drop Juniper Low from the top-8 give pool when asking for a WR');
+    const focused = tradeIdeas(b2, {}, 12, { involve: 'jl' }).ideas;
+    assert.ok(oneForOne(focused), 'expected Juniper Low ⇄ Nia Park when Juniper is selected. ideas: ' + focused.map(i => `${i.give}=>${i.get}`).join('; '));
+  });
+
+
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);
 })();

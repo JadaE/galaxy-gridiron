@@ -145,9 +145,11 @@ function ptsLabel(b: Bundle, id: string): string {
   return `${name} (${pts.toFixed(1)} pts/g${prior})`;
 }
 
-export type TradeOpts = { noHigh?: boolean; noStarters?: boolean };
+export type TradeOpts = { noHigh?: boolean; noStarters?: boolean; involve?: string };
 /** 🔒 Will-not-trade players are never offered. opts.noHigh also keeps 💎 personal-high-value players out,
- * opts.noStarters keeps her current starters out. */
+ * opts.noStarters keeps her current starters out. opts.involve keeps only ideas that give or get that player
+ * (same fairness, need, bye-hole, and Out rules as the general list) and pins them into the give/get
+ * search so the top-8 pool cap or top-3 need scan cannot drop them. */
 export function tradeIdeas(b: Bundle, tags: Tags, limit = 10, opts: TradeOpts = {}) {
   if (!b.fc) return { ideas: [] as Idea[], profiles: [] as TeamProfile[], mine: null as TeamProfile | null };
   const scale = productionScale(b);
@@ -164,6 +166,14 @@ export function tradeIdeas(b: Bundle, tags: Tags, limit = 10, opts: TradeOpts = 
   const base = lineup(b.me.players);
   const giveable = b.me.players.filter(id => b.players[id] && POS.includes(ppos(b, id) as any) && v(id) > 0 && tags[id] !== 'never' && !(opts.noHigh && tags[id] === 'high') && !(opts.noStarters && b.me.starters.includes(id)) && !isOut(b.players[id]?.i));
   const myNeedOrder = [...POS].sort((p, q) => mine.rel[p] - mine.rel[q]);
+  const focus = opts.involve;
+  const focusPos = focus && POS.includes(ppos(b, focus) as any) ? ppos(b, focus) : '';
+  // General ideas scan the 3 weakest needs. A selected player on another team must still be
+  // searchable even if their position is the 4th need.
+  const needScan: string[] = myNeedOrder.slice(0, 3);
+  if (focus && focusPos && !b.me.players.includes(focus) && !needScan.includes(focusPos)) needScan.push(focusPos);
+  const pin = (list: string[], id?: string) => { if (id && !list.includes(id)) list.push(id); return list; };
+  const isAce = (prof: TeamProfile, id: string) => prof.byPos[ppos(b, id)]?.[0] === id;
   const ideas: Idea[] = [];
   const startableCount = (ids: string[], pos: string) => ids.filter(id => ppos(b, id) === pos && !isOut(b.players[id]?.i) && !onBye(b, id)).length;
   const needed = (pos: string) => Math.max(1, Math.round(ns[pos]));
@@ -219,14 +229,23 @@ export function tradeIdeas(b: Bundle, tags: Tags, limit = 10, opts: TradeOpts = 
       ideas.push({ team: prof.t, give, get, giveV: Math.round(marketGive), getV: Math.round(marketGet), net, theirNet, score, why, needFilled: getPos.find(p => mine.needs.includes(p) || mine.rel[p] < 1) || getPos[0], highTagged: high, note: notes.length ? notes.join('; ') : undefined, fairness: fairnessLine(marketGive, marketGet) });
     };
 
-    for (const need of myNeedOrder.slice(0, 3)) {
+    const focusHere = !!(focus && prof.t.players.includes(focus) && v(focus) > 0 && !isOut(b.players[focus]?.i));
+    for (const need of needScan) {
       const one = askable(prof, need, true);
       const depth = askable(prof, need, false);
+      if (focusHere && ppos(b, focus!) === need) {
+        // 1-for-1 may include mid-tier (and the ace only when they are surplus). Never pin the ace into bundled depth.
+        if (prof.surplus.includes(need) || !isAce(prof, focus!)) pin(one, focus);
+        if (prof.surplus.includes(need) && !isAce(prof, focus!)) pin(depth, focus);
+      }
       const prefer = giveable.filter(g => ppos(b, g) !== need);
-      const pool = (prefer.length ? prefer : giveable).slice().sort((a, c) => v(c) - v(a)).slice(0, 8);
+      const eligible = prefer.length ? prefer : giveable;
+      const pool = eligible.slice().sort((a, c) => v(c) - v(a)).slice(0, 8);
+      if (focus && eligible.includes(focus)) pin(pool, focus);
       for (const target of one) for (const g of pool) tryDeal([g], [target]);
       // 2-for-2 even swaps, then 2-for-1 only for surplus depth (never their ace).
-      const getPool = [...new Set(myNeedOrder.slice(0, 3).flatMap(p => askable(prof, p, false)))].sort((a, c) => v(c) - v(a)).slice(0, 8);
+      const getPool = [...new Set(needScan.flatMap(p => askable(prof, p, false)))].sort((a, c) => v(c) - v(a)).slice(0, 8);
+      if (focusHere && prof.surplus.includes(focusPos) && !isAce(prof, focus!)) pin(getPool, focus);
       const givePairs = combos(pool, 2);
       for (const gp of combos(getPool, 2)) for (const give of givePairs) tryDeal(give, gp);
       for (const target of depth) for (const give of givePairs) {
@@ -240,13 +259,18 @@ export function tradeIdeas(b: Bundle, tags: Tags, limit = 10, opts: TradeOpts = 
   const seen = new Set<string>(), perTeam: Record<number, number> = {}, used: Record<string, number> = {}, gotUsed: Record<string, number> = {};
   const out: Idea[] = [];
   const keyOf = (i: Idea) => i.get.slice().sort().join(',') + '|' + i.give.slice().sort().join(',');
-  const pool = ideas.filter(i => { const k = keyOf(i); if (seen.has(k)) return false; seen.add(k); return true; });
+  const pool = ideas.filter(i => {
+    const k = keyOf(i); if (seen.has(k)) return false; seen.add(k);
+    if (focus && !i.give.includes(focus) && !i.get.includes(focus)) return false;
+    return true;
+  });
+  const teamCap = focus ? 5 : 2;
   const eff = (i: Idea) => i.score * Math.pow(0.55, Math.max(0, ...i.give.map(g => used[g] || 0))) * Math.pow(0.7, Math.max(0, ...i.get.map(g => gotUsed[g] || 0))) * Math.pow(0.8, perTeam[i.team.rid] || 0);
   while (out.length < limit) {
     let best: Idea | null = null, bs = -Infinity;
     for (const i of pool) {
       if (out.includes(i)) continue;
-      if ((perTeam[i.team.rid] || 0) >= 2 || i.give.some(g => (used[g] || 0) >= MAX_GIVE_USES)) continue;
+      if ((perTeam[i.team.rid] || 0) >= teamCap || i.give.some(g => g !== focus && (used[g] || 0) >= MAX_GIVE_USES)) continue;
       const e = eff(i); if (e > bs) { bs = e; best = i; }
     }
     if (!best) break;
