@@ -22,6 +22,8 @@ let fam: FamilyKey | null = null;
 export function setFamilyKey(k: FamilyKey | null) { fam = validKey(k) ? k : null; memo = null; }
 export const hasFamilyKey = () => !!fam;
 const base = (c: string) => `${SITE}/.herenow/data/${c}`;
+/** Live family collection URL, or null when the board is locked. Used by trade-chip sync on the same Site Data path. */
+export function familyLiveUrl(): string | null { return fam ? base(fam.live) : null; }
 
 /** Checks a derived key against the site: 200 = right password, 404 (collection not active) = wrong password. */
 export async function probeFamilyKey(k: FamilyKey, fetcher: typeof fetch = fetch): Promise<'ok' | 'wrong' | 'offline'> {
@@ -42,7 +44,7 @@ const ABBR = /^[A-Z]{2,3}$/;
 function clean(r: any, archived = false): Snap | null {
   const d = r?.data;
   const at = archived && Number.isFinite(d?.oc) && d.oc > 0 ? Number(d.oc) : Date.parse(r?.createdAt);
-  if (!d || !Number.isFinite(at) || d.app !== APP || typeof d.uid !== 'string' || !/^\d{1,24}$/.test(d.uid) || typeof d.un !== 'string' || d.un.startsWith('_')) return null;
+  if (!d || !Number.isFinite(at) || d.app !== APP || (d.typ && d.typ !== 'picks') || typeof d.uid !== 'string' || !/^\d{1,24}$/.test(d.uid) || typeof d.un !== 'string' || d.un.startsWith('_')) return null;
   const picks: Record<string, string> = {}, bf: Record<string, number> = {};
   for (const [g, t] of Object.entries<any>(d.picks || {})) if (/^\d{4,12}$/.test(g) && typeof t === 'string' && ABBR.test(t)) picks[g] = t;
   for (const g of Object.keys(d.bf || {})) if (picks[g]) bf[g] = 1;
