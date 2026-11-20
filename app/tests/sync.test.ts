@@ -1,7 +1,7 @@
 // Run: npx tsx tests/sync.test.ts  (mocked store and network only)
 import assert from 'node:assert/strict';
 import fs from 'fs';
-import { setKv, resolve, snapshotFor, enqueue, flush, pendingCount, fetchSnaps, Snap, setFamilyKey, hasFamilyKey, probeFamilyKey } from '../src/picks/sync';
+import { setKv, resolve, snapshotFor, enqueue, flush, pendingCount, fetchSnaps, Snap, setFamilyKey, hasFamilyKey, probeFamilyKey, subscribePending, _resetInflight } from '../src/picks/sync';
 import { deriveFamilyKey } from '../src/picks/family';
 import { SITE_ORIGIN as SITE } from '../src/config';
 import { Game, weekRecord } from '../src/picks/core';
@@ -94,6 +94,60 @@ setKv(async k => mem[k] ?? null, async (k, v) => { mem[k] = v; });
     assert.equal(await probeFamilyKey(k, (async () => new Response('{"records":[]}')) as any), 'ok');
     assert.equal(await probeFamilyKey(k, (async () => new Response('{"code":"collection_disabled"}', { status: 404 })) as any), 'wrong');
     assert.equal(await probeFamilyKey(k, (async () => { throw new Error('net'); }) as any), 'offline');
+  });
+
+  console.log('Flush timeout, dedupe, and pending count');
+  const resetQ = async () => { _resetInflight(); for (const k of Object.keys(mem)) delete mem[k]; setFamilyKey(deriveFamilyKey('mock-family-password')); };
+  const pick = (team: string, week = 7) => ({ '401873010': { team, week, at: 1, src: 'live' as const } });
+  await t('a hung request times out, stays queued, and does not block the next flush', async () => {
+    await resetQ();
+    const me = { uid: '1000000000000000011', un: 'mockuser' };
+    await enqueue(snapshotFor(me, 2026, 7, pick('CHI')));
+    const hung = await flush((async () => new Promise(() => {})) as any, { timeoutMs: 40 });
+    assert.equal(hung.error, 'timeout');
+    assert.equal(await pendingCount(), 1);
+    const ok = await flush((async () => new Response('{}', { status: 201 })) as any, { timeoutMs: 40 });
+    assert.equal(ok.sent, 1); assert.equal(await pendingCount(), 0);
+  });
+  await t('a newer snapshot aborts an in-flight older send so only the newer pick is posted', async () => {
+    await resetQ();
+    const me = { uid: '1000000000000000011', un: 'mockuser' };
+    await enqueue(snapshotFor(me, 2026, 7, pick('CHI')));
+    const completed: string[] = [];
+    let started: ((v?: unknown) => void) | undefined;
+    const firstStarted = new Promise(r => { started = r; });
+    const first = flush((async (_u: string, init: any) => {
+      const team = JSON.parse(init.body).picks['401873010'];
+      if (team === 'CHI') { started?.(); return new Promise(() => {}); }
+      completed.push(team);
+      return new Response('{}', { status: 201 });
+    }) as any, { timeoutMs: 2000 });
+    await firstStarted;
+    await enqueue(snapshotFor(me, 2026, 7, pick('NE')));
+    const r = await first;
+    assert.equal(await pendingCount(), 0);
+    assert.deepEqual(completed, ['NE']);
+    assert.equal(r.sent, 1);
+  });
+  await t('401 drops that snapshot and does not clear the family key (existing relock behavior)', async () => {
+    await resetQ();
+    const me = { uid: '1000000000000000011', un: 'mockuser' };
+    await enqueue(snapshotFor(me, 2026, 7, pick('CHI')));
+    const r = await flush((async () => new Response('{}', { status: 401 })) as any);
+    assert.equal(r.error, 'rejected 401');
+    assert.equal(await pendingCount(), 0);
+    assert.equal(hasFamilyKey(), true);
+  });
+  await t('subscribePending reports the waiting-to-share count', async () => {
+    await resetQ();
+    const seen: number[] = [];
+    const off = subscribePending(n => seen.push(n));
+    const me = { uid: '1000000000000000011', un: 'mockuser' };
+    await enqueue(snapshotFor(me, 2026, 7, pick('CHI')));
+    await enqueue(snapshotFor(me, 2026, 8, pick('NE', 8)));
+    await new Promise(r => setTimeout(r, 20));
+    off();
+    assert.ok(seen.includes(1) && seen.includes(2), 'saw counts 1 and 2, got ' + JSON.stringify(seen));
   });
   console.log(`\n${pass} passed, ${fail} failed`);
   if (fail) process.exit(1);
