@@ -61,7 +61,8 @@ export default function Trades() {
               {x.get.map(pp)}
             </View>
           </View>
-          <Text style={[T.sub, { marginTop: 6 }]}>Upgrades your {x.needFilled}.{x.why.length ? ' ' + x.why.map(w => w[0].toUpperCase() + w.slice(1)).join('. ') + '.' : ''}</Text>
+          <Text style={[T.sub, { marginTop: 6 }]}>{x.why.join(' ')}</Text>
+          {x.fairness ? <Text style={[T.sub, { marginTop: 4 }]}>{x.fairness}</Text> : null}
           {x.note ? <Text style={{ color: C.gold, fontSize: 11.5, marginTop: 4 }}>⚠️ Heads up: {x.note}.</Text> : null}
         </Card>
       )) : <Card><Text style={T.body}>No balanced trade ideas found right now. Try un-locking a player or two.</Text></Card>}
@@ -112,7 +113,7 @@ export default function Trades() {
         })()}
         <Text style={[T.sub, { marginTop: 8 }]}>Sleeper doesn't share pending trade offers publicly, so check the Sleeper app for offers sent to you.</Text>
       </Card>
-      <Text style={[T.sub, { paddingHorizontal: 4 }]}>Values from FantasyCalc (redraft, {b.league.total_rosters}-team PPR, based on real trades). These are starting points for a conversation, not sure things.</Text>
+      <Text style={[T.sub, { paddingHorizontal: 4 }]}>Trade value starts from FantasyCalc (redraft, {b.league.total_rosters}-team PPR, based on real trades) and is nudged by each player's scoring trend, including prior-season and career stats. These are starting points for a conversation, not sure things.</Text>
     </Screen>
   );
 }
