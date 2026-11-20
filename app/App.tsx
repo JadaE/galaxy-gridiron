@@ -27,6 +27,7 @@ import { restoreOnStart, restoreMessage } from './src/picks/restore';
 import { loadPicks, savePicks } from './src/picks/store';
 import { loadWeek, nflNow } from './src/picks/espn';
 import { getSecret } from './src/ai/secure';
+import { startPickSync } from './src/picks/retry';
 
 const TABS = [
   { k: 'Team', icon: '🏠' }, { k: 'Matchup', icon: '⚔️' }, { k: 'League', icon: '🏆' },
@@ -120,6 +121,13 @@ function Main() {
   }, [openLeague]);
 
   useEffect(() => { (async () => { const saved = await loadSetting('username'); if (saved) { setUsername(saved); start(saved); } else if (qp('auto') && qp('user')) start(qp('user')!); else setPhase('onboard'); })(); }, []);
+
+  // JC-38 / JC-60: retry unsent picks on launch, resume, and every few minutes — not only while the Picks tab is open.
+  useEffect(() => {
+    if (phase !== 'ready') return;
+    const { stop } = startPickSync({ getKey: () => getSecret('lb_family') });
+    return stop;
+  }, [phase]);
 
   const refresh = useCallback(async () => {
     if (!b) return;
