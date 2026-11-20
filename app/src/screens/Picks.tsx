@@ -16,6 +16,7 @@ import { loadPicks, savePicks, loadLbMe, saveLbMe, LbMe, loadPref, savePref } fr
 import { parseNotes, ParseResult } from '../picks/parse';
 import { TEAMS } from '../picks/teams';
 import { fetchSnaps, resolve, snapshotFor, enqueue, flush, pendingCount, Person, setFamilyKey, probeFamilyKey } from '../picks/sync';
+import WaitingToShare from './WaitingToShare';
 import { deriveFamilyKey, validKey, FamilyKey } from '../picks/family';
 import { getSecret, setSecret, delSecret } from '../ai/secure';
 import { restoreFromServer, onRestored, mergeRestored, weeksToShare, restoreMessage } from '../picks/restore';
@@ -251,6 +252,7 @@ export default function Picks() {
           right={<View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}><Avatar av={me.avatar} un={me.username} size={34} col={C.mint} /></View>} />
         <View style={{ paddingHorizontal: 14, paddingVertical: 8, backgroundColor: C.bg }}><Seg v={view} set={setView} /></View>
         <View style={{ paddingHorizontal: 14, gap: 12 }}>
+          <WaitingToShare />
           {err ? <Card><Text style={{ color: C.red }}>Couldn't load the NFL schedule: {err}. Pull down to retry.</Text></Card> : null}
 
           {view === 'week' && (
@@ -418,7 +420,7 @@ function Board({ me, lbMe, locked, onUnlock, onLock, people, byWeek, weeks, myPi
           <View style={{ width: 20, height: 20, borderRadius: 6, borderWidth: 2, borderColor: inclBf ? C.gold : C.border, backgroundColor: inclBf ? C.gold : 'transparent', alignItems: 'center', justifyContent: 'center' }}>{inclBf ? <Text style={{ color: C.bg, fontWeight: '900', fontSize: 12 }}>✓</Text> : null}</View>
           <Text style={{ color: C.sub, fontSize: 12.5 }}>Include backfilled picks ✱ (entered after the game)</Text>
         </Pressable>
-        {lbMe ? <Text style={[T.sub, { marginTop: 8 }]}>Sharing as {lbMe.un}{state.pending ? ` · ${state.pending} update${state.pending > 1 ? 's' : ''} waiting to sync` : ' · synced'}{state.stale ? ' · offline copy' : ''}. Tap (i) for how it works.</Text> : null}
+        {lbMe ? <Text style={[T.sub, { marginTop: 8 }]}>Sharing as {lbMe.un}{state.pending ? ` · ${state.pending} update${state.pending > 1 ? 's' : ''} waiting to share` : ' · synced'}{state.stale ? ' · offline copy' : ''}. Tap (i) for how it works.</Text> : null}
         {state.err ? <Text style={{ color: C.gold, fontSize: 12, marginTop: 4 }}>{state.err}</Text> : null}
         {lbMe ? <Pressable onPress={onLeave} style={{ marginTop: 8 }}><Text style={{ color: C.dim, fontSize: 12 }}>Stop sharing on this phone</Text></Pressable> : null}
         {!sample ? <Pressable onPress={onLock} style={{ marginTop: 6 }}><Text style={{ color: C.dim, fontSize: 12 }}>Forget the leaderboard password on this phone</Text></Pressable> : null}

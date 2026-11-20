@@ -83,30 +83,76 @@ export function snapshotFor(me: { uid: string; un: string; av?: string }, season
 }
 
 // ---- offline queue: newest snapshot per user+week, retried until it's accepted ----
+const pendingListeners = new Set<(n: number) => void>();
+function emitPending() { pendingCount().then(n => { for (const fn of pendingListeners) fn(n); }).catch(() => {}); }
+/** Subscribe to the unsent-snapshot count. Returns an unsubscribe function. */
+export function subscribePending(fn: (n: number) => void): () => void {
+  pendingListeners.add(fn);
+  pendingCount().then(n => { if (pendingListeners.has(fn)) fn(n); }).catch(() => {});
+  return () => { pendingListeners.delete(fn); };
+}
+
 async function getQueue(): Promise<Queued[]> { try { return JSON.parse((await kv.get('lb:queue')) || '[]'); } catch { return []; } }
-async function setQueue(q: Queued[]) { await kv.set('lb:queue', JSON.stringify(q)); }
+async function setQueue(q: Queued[]) { await kv.set('lb:queue', JSON.stringify(q)); emitPending(); }
+
+const weekId = (s: { uid: string; season: number; week: number }) => `${s.uid}-${s.season}-${s.week}`;
+const inflight = new Map<string, AbortController>();
+export const FLUSH_TIMEOUT_MS = 15_000;
+
+function fetchWithTimeout(fetcher: typeof fetch, url: string, init: RequestInit, ms: number): Promise<Response> {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), ms);
+  const aborted = new Promise<never>((_, rej) => {
+    const fail = () => { const e = new Error('timeout'); e.name = 'AbortError'; rej(e); };
+    if (ac.signal.aborted) fail();
+    else ac.signal.addEventListener('abort', fail, { once: true });
+  });
+  const prev = init.signal;
+  if (prev) {
+    if (prev.aborted) ac.abort();
+    else prev.addEventListener('abort', () => ac.abort(), { once: true });
+  }
+  return Promise.race([Promise.resolve(fetcher(url, { ...init, signal: ac.signal })), aborted]).finally(() => clearTimeout(t));
+}
+
 export async function enqueue(s: Queued) {
+  // A newer snapshot for this week replaces the queued one; abort an in-flight POST of the older one
+  // so a late response cannot land after a newer send (resolve() uses the server's createdAt).
+  inflight.get(weekId(s))?.abort();
   const q = (await getQueue()).filter(x => !(x.uid === s.uid && x.season === s.season && x.week === s.week));
   q.push(s); await setQueue(q);
 }
 export async function pendingCount() { return (await getQueue()).length; }
 let flushing = false;
-/** Send queued snapshots. Stops at the first network/rate-limit failure and keeps the rest for later. */
-export async function flush(fetcher: typeof fetch = fetch): Promise<{ sent: number; left: number; error?: string }> {
-  if (flushing || !fam) return { sent: 0, left: (await getQueue()).length };
+/** Send queued snapshots. Stops at the first network/rate-limit/timeout failure and keeps the rest for later. */
+export async function flush(fetcher: typeof fetch = fetch, opts?: { timeoutMs?: number }): Promise<{ sent: number; left: number; error?: string; skipped?: boolean }> {
+  if (flushing || !fam) return { sent: 0, left: (await getQueue()).length, skipped: true };
   flushing = true;
+  const timeoutMs = opts?.timeoutMs ?? FLUSH_TIMEOUT_MS;
   let sent = 0, error: string | undefined;
   try {
     let q = await getQueue();
     while (q.length) {
       const s = q[0];
+      const cur = (await getQueue()).find(x => x.uid === s.uid && x.season === s.season && x.week === s.week);
+      if (!cur || cur.key !== s.key) { q = await getQueue(); continue; }
+      const ac = new AbortController();
+      inflight.set(weekId(s), ac);
       let r: Response;
       try {
-        r = await fetcher(base(fam.live), { method: 'POST', headers: { 'content-type': 'application/json', Origin: SITE, 'Idempotency-Key': s.key }, body: JSON.stringify({ uid: s.uid, un: s.un, av: s.av || undefined, season: s.season, week: s.week, picks: s.picks, bf: s.bf, ts: s.ts, app: APP }) });
-      } catch (e: any) { error = 'offline'; break; }
+        r = await fetchWithTimeout(fetcher, base(fam.live), { method: 'POST', headers: { 'content-type': 'application/json', Origin: SITE, 'Idempotency-Key': s.key }, body: JSON.stringify({ uid: s.uid, un: s.un, av: s.av || undefined, season: s.season, week: s.week, picks: s.picks, bf: s.bf, ts: s.ts, app: APP }), signal: ac.signal }, timeoutMs);
+      } catch (e: any) {
+        inflight.delete(weekId(s));
+        const qNow = await getQueue();
+        if (!qNow.some(x => x.key === s.key)) { q = qNow; continue; }
+        error = (e?.name === 'AbortError' || /timeout/i.test(String(e?.message || e))) ? 'timeout' : 'offline';
+        break;
+      }
+      inflight.delete(weekId(s));
       if (r.status === 429) { error = 'busy (rate limited), will retry'; break; }
       if (!r.ok && r.status >= 500) { error = 'server error ' + r.status; break; }
-      // 4xx other than 429: the snapshot itself is bad; drop it so it can't block the queue
+      // 4xx other than 429, including 401: the snapshot itself is bad; drop it so it can't block the queue.
+      // 401 does not change the family-key / lock state (existing behavior).
       if (!r.ok) error = 'rejected ' + r.status;
       else { sent++; if (memo) memo.at = 0; }
       q = (await getQueue()).filter(x => x.key !== s.key);
@@ -115,6 +161,9 @@ export async function flush(fetcher: typeof fetch = fetch): Promise<{ sent: numb
     return { sent, left: q.length, error };
   } finally { flushing = false; }
 }
+
+/** Test-only: drop in-flight abort controllers (not the queue). */
+export function _resetInflight() { for (const c of inflight.values()) c.abort(); inflight.clear(); flushing = false; }
 
 // ---- resolving picks per person ----
 export type Person = { uid: string; un: string; av?: string; picks: PickMap; late: number; sample?: boolean };
