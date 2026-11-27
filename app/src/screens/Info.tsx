@@ -3,8 +3,9 @@ import React, { useState } from 'react';
 import { View, Text, Modal, ScrollView, Pressable } from 'react-native';
 import { C } from '../theme';
 import { useInsets } from '../safe';
+import { PLAYOFF_COPY, PLAYOFF_INFO_SECS } from '../playoffRace';
 
-export type InfoKey = 'team' | 'matchup' | 'league' | 'waivers' | 'trades' | 'picks' | 'picksboard' | 'chat' | 'player';
+export type InfoKey = 'team' | 'matchup' | 'league' | 'waivers' | 'trades' | 'picks' | 'picksboard' | 'chat' | 'player' | 'playoffrun';
 type Sec = [string, string];
 const COMMON: Sec[] = [
   ['Proj', "Sleeper's own projection for this week, scored with your league's settings. The same number you see next to a player in Sleeper's Match screen."],
@@ -51,6 +52,7 @@ const PAGES: Record<InfoKey, { title: string; secs: Sec[] }> = {
     ['"+675 lineup value"', "How much a trade idea raises YOUR lineup on that same value scale (your starters after the trade minus before). Bigger means a bigger upgrade for you, while staying fair enough on market value that the other team might say yes."],
     ['🔒 and 💎', '🔒 Will not trade: never offered. 💎 Personal high value: only offered for a clear overpay (at least 115% of market).'],
   ] },
+  playoffrun: { title: PLAYOFF_COPY.title, secs: PLAYOFF_INFO_SECS },
   picks: { title: 'Picks page', secs: [
     ['Record and chart', 'Your pick\'em record by week. The gold line is your season win %. Games are graded from ESPN\'s public final scores.'],
     ['Leaderboard', "For friends and family: ask the app owner for the leaderboard password and enter it once. Picks are shared by Sleeper username. Other players' picks stay hidden until that game kicks off."],

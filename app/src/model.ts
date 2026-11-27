@@ -5,7 +5,7 @@ import { slimJunk } from './junk';
 import { recordSnapshot } from './news';
 import { GameInfo, Allowed, loadGames, pointsAllowed, practiceFor } from './gameinfo';
 
-export type Team = { rid: number; ownerId: string; name: string; display: string; avatar?: string; wins: number; losses: number; ties: number; pf: number; pa: number; ppts: number; rank: number; pfRank: number; players: string[]; starters: string[]; reserve: string[]; waiverPos?: number };
+export type Team = { rid: number; ownerId: string; name: string; display: string; avatar?: string; wins: number; losses: number; ties: number; pf: number; pa: number; ppts: number; rank: number; pfRank: number; players: string[]; starters: string[]; reserve: string[]; waiverPos?: number; division?: number };
 export type Bundle = {
   league: any; state: any; season: string; isPast: boolean; userId: string;
   week: number; lastScored: number; leg: number;
@@ -101,7 +101,7 @@ export async function loadBundle(leagueId: string, userId: string, force = false
       rid: r.roster_id, ownerId: r.owner_id, display: u.display_name || `Team ${r.roster_id}`,
       name: u.metadata?.team_name || u.display_name || `Team ${r.roster_id}`, avatar: u.avatar,
       wins: s.wins || 0, losses: s.losses || 0, ties: s.ties || 0, pf: num(s.fpts, s.fpts_decimal), pa: num(s.fpts_against, s.fpts_against_decimal), ppts: num(s.ppts, s.ppts_decimal),
-      rank: 0, pfRank: 0, players: r.players || [], starters: r.starters || [], reserve: r.reserve || [], waiverPos: s.waiver_position,
+      rank: 0, pfRank: 0, players: r.players || [], starters: r.starters || [], reserve: r.reserve || [], waiverPos: s.waiver_position, division: s.division || undefined,
     };
   });
   [...teams].sort((a, b) => b.wins - a.wins || a.losses - b.losses || b.pf - a.pf).forEach((t, i) => (t.rank = i + 1));

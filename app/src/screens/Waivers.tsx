@@ -10,10 +10,10 @@ import { Pressable } from 'react-native';
 
 const ct = (ms: number) => new Date(ms).toLocaleString('en-US', { timeZone: 'America/Chicago', weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) + ' CT';
 
-export default function Waivers() {
+export default function Waivers({ embedded }: { embedded?: boolean } = {}) {
   const { b } = useApp();
   const [pos, setPos] = useState('ALL');
-  if (b.isPast) return <Screen info="waivers" title="Waivers"><Card><Text style={T.body}>Waivers and free-agent tools are for current seasons. Switch to a 2026 league.</Text></Card></Screen>;
+  if (b.isPast) { const body = <Card><Text style={T.body}>Waivers and free-agent tools are for current seasons. Switch to a 2026 league.</Text></Card>; return embedded ? body : <Screen info="waivers" title="Waivers">{body}</Screen>; }
   const wr = waiverReport(b);
   const fresh = wr.runAt ? Date.now() - wr.runAt < 3.5 * 86400_000 : false;
   const okN = wr.latest.filter(t => t.status === 'complete').length;
@@ -26,8 +26,8 @@ export default function Waivers() {
   const [allMoves, setAllMoves] = useState(false);
   const rostered = rosteredSet(b);
   const total = wr.season.ok + wr.season.fail;
-  return (
-    <Screen info="waivers" title="Waivers" subtitle={`Waiver priority: ${b.me.waiverPos ? '#' + b.me.waiverPos : '-'} of ${b.teams.length}${wr.usesFaab ? ` · FAAB used $${wr.budgetUsed}` : ''}`}>
+  const inner = (
+    <>
       <Card title="How did my waivers go?" emoji="🌠" accent={C.mint}>
         {wr.runAt ? (
           <>
@@ -116,6 +116,7 @@ export default function Waivers() {
           <Text style={[T.sub, { marginTop: 6 }]}>Tap a move for the why. Each grade compares your real lineup with what you'd most likely have started without the move (the player you dropped or your best bench option that played). Filling an empty or bye slot counts in full. Adds that sat on your bench count 0. Separate add and drop transactions made close together count as one move.</Text>
         </Card>
       ) : null}
-    </Screen>
+    </>
   );
+  return embedded ? inner : <Screen info="waivers" title="Waivers" subtitle={`Waiver priority: ${b.me.waiverPos ? '#' + b.me.waiverPos : '-'} of ${b.teams.length}${wr.usesFaab ? ` · FAAB used $${wr.budgetUsed}` : ''}`}>{inner}</Screen>;
 }
