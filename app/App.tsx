@@ -14,8 +14,9 @@ import { saveSetting, loadSetting } from './src/api';
 import Home from './src/screens/Home';
 import Matchup from './src/screens/Matchup';
 import League from './src/screens/League';
-import Waivers from './src/screens/Waivers';
-import Trades from './src/screens/Trades';
+import Pickups from './src/screens/Pickups';
+import PlayoffRun from './src/screens/PlayoffRun';
+import { PickupsPane } from './src/pickups';
 import Chat from './src/screens/Chat';
 import Videos from './src/screens/Videos';
 import Picks from './src/screens/Picks';
@@ -33,10 +34,26 @@ import { flushTags } from './src/tags/sync';
 import { restoreTagsOnStart, restoreTagsMessage, saveAndQueueTag, uploadLocalTags } from './src/tags/restore';
 
 const TABS = [
-  { k: 'Team', icon: '🏠' }, { k: 'Matchup', icon: '⚔️' }, { k: 'League', icon: '🏆' },
-  { k: 'Waivers', icon: '🧲' }, { k: 'Trades', icon: '🤝' }, { k: 'Picks', icon: '🎯' },
+  { k: 'Team', icon: '🏠', label: 'Team' },
+  { k: 'Matchup', icon: '⚔️', label: 'Matchup' },
+  { k: 'League', icon: '🏆', label: 'League' },
+  { k: 'Pickups', icon: '🔄', label: 'Player pickups' },
+  { k: 'Playoff', icon: '🏁', label: 'Playoff run' },
+  { k: 'Picks', icon: '🎯', label: 'Picks' },
 ];
 const qp = (k: string) => (Platform.OS === 'web' && typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get(k) : null);
+const startTab = () => {
+  const t = qp('tab') || 'Team';
+  if (t === 'Waivers' || t === 'Trades') return 'Pickups';
+  if (t === 'Playoff run' || t === 'PlayoffRun') return 'Playoff';
+  return t;
+};
+const startPane = (): PickupsPane | 'default' | null => {
+  const t = qp('tab');
+  if (t === 'Waivers') return 'waivers';
+  if (t === 'Trades') return 'trades';
+  return null;
+};
 
 function Galaxy({ children }: { children: React.ReactNode }) {
   const { width, height } = useWindowDimensions();
@@ -61,7 +78,8 @@ function Main() {
   const [userId, setUserId] = useState('');
   const [leagues, setLeagues] = useState<any[]>([]);
   const [b, setB] = useState<Bundle | null>(null);
-  const [tab, setTab] = useState(qp('tab') || 'Team');
+  const [tab, setTab] = useState(startTab());
+  const [pickupsReq, setPickupsReq] = useState<PickupsPane | 'default' | null>(startPane());
   const [player, setPlayer] = useState<string | null>(qp('player'));
   const [leagueModal, setLeagueModal] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
@@ -198,7 +216,13 @@ function Main() {
   }
 
   const ctx = {
-    b, refreshing, refresh, leagues, openPlayer: setPlayer, openLeagues: () => setLeagueModal(true), go: setTab,
+    b, refreshing, refresh, leagues, openPlayer: setPlayer, openLeagues: () => setLeagueModal(true),
+    go: (next: string) => {
+      if (next === 'Waivers') { setPickupsReq('waivers'); setTab('Pickups'); return; }
+      if (next === 'Trades') { setPickupsReq('trades'); setTab('Pickups'); return; }
+      if (next === 'Playoff run' || next === 'PlayoffRun') { setTab('Playoff'); return; }
+      setTab(next);
+    },
     ask: (q: string) => { setPending(q); setChatOpen(true); },
     openChat: (q?: string) => { if (q) setPending(q); setChatOpen(true); },
     tags, setTag,
@@ -208,7 +232,7 @@ function Main() {
     openTutorial: () => { setSettings(null); setTutorial(0); },
     tab,
     update, dismissUpdate: () => { if (update) dismiss(update.versionCode); setUpdate(null); }, checkUpdate,
-    selectLeague: async (lid: string) => { setRefreshing(true); try { await openLeague(lid, userId); } catch (e) {} setRefreshing(false); },
+    selectLeague: async (lid: string) => { setPickupsReq('default'); setRefreshing(true); try { await openLeague(lid, userId); } catch (e) {} setRefreshing(false); },
   };
   return (
     <AppCtx.Provider value={ctx}>
@@ -218,19 +242,19 @@ function Main() {
           {tab === 'Team' && <Home />}
           {tab === 'Matchup' && <Matchup key={b.league.league_id} />}
           {tab === 'League' && <League />}
-          {tab === 'Waivers' && <Waivers />}
-          {tab === 'Trades' && <Trades />}
+          {tab === 'Pickups' && <Pickups key={b.league.league_id} requested={pickupsReq} />}
+          {tab === 'Playoff' && <PlayoffRun key={b.league.league_id} />}
           {tab === 'Picks' && <Picks key={userId} />}
         </View>
         <View style={{ flexDirection: 'row', backgroundColor: '#0A0E1F', borderTopWidth: 1, borderTopColor: C.border, paddingBottom: Math.max(insets.bottom, 6), paddingTop: 6 }}>
           {TABS.map(t => {
             const on = tab === t.k;
             return (
-              <Pressable key={t.k} onPress={() => setTab(t.k)} style={{ flex: 1, alignItems: 'center', paddingVertical: 4 }}>
-                <View style={{ paddingHorizontal: 12, paddingVertical: 3, borderRadius: 14, backgroundColor: on ? C.mintSoft : 'transparent' }}>
+              <Pressable key={t.k} onPress={() => { if (t.k === 'Pickups') setPickupsReq('default'); setTab(t.k); }} style={{ flex: 1, alignItems: 'center', paddingVertical: 2 }}>
+                <View style={{ paddingHorizontal: 10, paddingVertical: 3, borderRadius: 14, backgroundColor: on ? C.mintSoft : 'transparent' }}>
                   <Text style={{ fontSize: 18, opacity: on ? 1 : 0.55 }}>{t.icon}</Text>
                 </View>
-                <Text style={{ color: on ? C.mint : C.dim, fontSize: 10.5, fontWeight: on ? '800' : '600', marginTop: 2 }}>{t.k}</Text>
+                <Text style={{ color: on ? C.mint : C.dim, fontSize: 9.5, fontWeight: on ? '800' : '600', marginTop: 1, textAlign: 'center', lineHeight: 11 }} numberOfLines={2}>{t.label}</Text>
               </Pressable>
             );
           })}

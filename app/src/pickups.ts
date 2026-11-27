@@ -1,3 +1,4 @@
+import { DeadlineStatus } from './deadline';
 import { Bundle, ros, optimalLineup, FLEX_ELIG, elig, ppos, pname, isOut, rosteredSet, byeWeek, projOf, val, isRelevant, benchWorth } from './model';
 
 export type DropPick = { id: string | null; cost: number; safety: 'Safe' | 'OK' | 'Risky'; reasons: string[] };
@@ -89,3 +90,11 @@ export function pickups(b: Bundle, limit = 30): Fit[] {
   top.forEach(f => (f.drop = bestDrop(b, f.id)));
   return top;
 }
+
+export type PickupsPane = 'trades' | 'waivers';
+
+/** Default pane inside Player pickups. Closed deadline → Waivers; otherwise Trades (including no deadline). */
+export function defaultPickupsPane(status: DeadlineStatus): PickupsPane {
+  return status === 'closed' ? 'waivers' : 'trades';
+}
+

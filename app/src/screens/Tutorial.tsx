@@ -11,16 +11,16 @@ export const TUTORIAL_KEY = 'tutorial:v1';
 export const tutorialSeen = async () => !!(await loadSetting(TUTORIAL_KEY));
 export const markTutorialSeen = () => saveSetting(TUTORIAL_KEY, String(Date.now()));
 
-const TABS = [['🏠', 'Team'], ['⚔️', 'Matchup'], ['🏆', 'League'], ['🧲', 'Waivers'], ['🤝', 'Trades'], ['🎯', 'Picks']];
+const TABS = [['🏠', 'Team', 'Team'], ['⚔️', 'Matchup', 'Matchup'], ['🏆', 'League', 'League'], ['🔄', 'Pickups', 'Player pickups'], ['🏁', 'Playoff', 'Playoff run'], ['🎯', 'Picks', 'Picks']];
 type Step = { emoji: string; title: string; body: string; art: React.ReactNode };
 
 function TabArt({ on }: { on?: string[] }) {
   return (
     <View style={{ flexDirection: 'row', backgroundColor: '#0A0E1F', borderRadius: 16, borderWidth: 1, borderColor: C.border, paddingVertical: 8, alignSelf: 'stretch' }}>
-      {TABS.map(([i, k]) => { const lit = !on || on.includes(k); return (
+      {TABS.map(([i, k, label]) => { const lit = !on || on.includes(k); return (
         <View key={k} style={{ flex: 1, alignItems: 'center', opacity: lit ? 1 : 0.3 }}>
-          <View style={{ paddingHorizontal: 8, paddingVertical: 2, borderRadius: 12, backgroundColor: on?.includes(k) ? C.mintSoft : 'transparent' }}><Text style={{ fontSize: 18 }}>{i}</Text></View>
-          <Text style={{ color: on?.includes(k) ? C.mint : C.sub, fontSize: 9.5, fontWeight: '700', marginTop: 2 }}>{k}</Text>
+          <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 12, backgroundColor: on?.includes(k) ? C.mintSoft : 'transparent' }}><Text style={{ fontSize: 16 }}>{i}</Text></View>
+          <Text style={{ color: on?.includes(k) ? C.mint : C.sub, fontSize: 8, fontWeight: '700', marginTop: 1, textAlign: 'center', lineHeight: 10 }} numberOfLines={2}>{label}</Text>
         </View>); })}
     </View>
   );

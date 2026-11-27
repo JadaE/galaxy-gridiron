@@ -14,7 +14,7 @@ const NeedChip = ({ p, kind }: { p: string; kind: 'need' | 'surplus' }) => (
 
 const SKILL = ['QB', 'RB', 'WR', 'TE'];
 
-export default function Trades() {
+export default function Trades({ embedded }: { embedded?: boolean } = {}) {
   const { b, openPlayer, tags } = useApp();
   const { width } = useWindowDimensions();
   const [involve, setInvolve] = useState<string | null>(null);
@@ -25,8 +25,8 @@ export default function Trades() {
   const closed = dStatus === 'closed';
   const dNote = dWeek != null ? deadlineMessage(dStatus, dWeek, b.week) : '';
   const sub = `${deadlineSubtitle(dStatus, dWeek)}${b.fc ? ' · Values from FantasyCalc' : ''}`;
-  if (b.isPast) return <Screen info="trades" title="Trades"><Card><Text style={T.body}>Trade ideas are for current seasons.</Text></Card></Screen>;
-  if (!closed && !b.fc) return <Screen info="trades" title="Trades" subtitle={sub}><Card><Text style={T.body}>Couldn't reach FantasyCalc trade values. Pull down to retry.</Text></Card></Screen>;
+  if (b.isPast) { const body = <Card><Text style={T.body}>Trade ideas are for current seasons.</Text></Card>; return embedded ? body : <Screen info="trades" title="Trades">{body}</Screen>; }
+  if (!closed && !b.fc) { const body = <Card><Text style={T.body}>Couldn't reach FantasyCalc trade values. Pull down to retry.</Text></Card>; return embedded ? body : <Screen info="trades" title="Trades" subtitle={sub}>{body}</Screen>; }
   const { ideas, profiles, mine } = b.fc ? tradeIdeas(b, tags, 10, involve ? { involve } : {}) : { ideas: [] as Idea[], profiles: [] as TeamProfile[], mine: null as TeamProfile | null };
   const fc = b.fc;
   const skillOf = (ids: string[]) => ids.filter(id => SKILL.includes(ppos(b, id))).sort((x, y) => ((fc?.[y] || 0) - (fc?.[x] || 0)));
@@ -56,8 +56,8 @@ export default function Trades() {
       <Text style={[T.body, { marginTop: 6, color: closed ? C.sub : C.text }]}>{dNote}</Text>
     </Card>
   ) : null;
-  return (
-    <Screen info="trades" title="Trades" subtitle={sub}>
+  const inner = (
+    <>
       {warning}
       {mine ? <Card title="Your roster vs the league" emoji="🧭" accent={C.purple}>
         {(['QB', 'RB', 'WR', 'TE'] as const).map(p => {
@@ -176,6 +176,7 @@ export default function Trades() {
         <Text style={[T.sub, { marginTop: 8 }]}>Sleeper doesn't share pending trade offers publicly, so check the Sleeper app for offers sent to you.</Text>
       </Card>
       <Text style={[T.sub, { paddingHorizontal: 4 }]}>Trade value starts from FantasyCalc (redraft, {b.league.total_rosters}-team PPR, based on real trades) and is nudged by each player's scoring trend, including prior-season and career stats. These are starting points for a conversation, not sure things.</Text>
-    </Screen>
-  );
+    </>
+    );
+  return embedded ? inner : <Screen info="trades" title="Trades" subtitle={sub}>{inner}</Screen>;
 }
