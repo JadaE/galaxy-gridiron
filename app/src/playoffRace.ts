@@ -19,7 +19,7 @@ export type RaceInput = {
   playoffStart: number;
   lastScored: number;
   week: number;
-  /** Sleeper settings.playoff_seed_type: 0 = record, 1 = division winners first. */
+  /** Sleeper settings.playoff_seed_type: 0 = fixed bracket, 1 = reseed. Not used for qualification. */
   playoffSeedType?: number;
   /** Remaining regular-season games (roster ids). */
   games: RemainingGame[];
@@ -81,6 +81,7 @@ export const PLAYOFF_COPY = {
   unconfigured: "This league doesn't have playoffs set up.",
   loading: 'Loading the remaining games…',
   waiversStillOpen: 'Waivers are still open — switch to that tab to see them.',
+  scheduleUnknown: 'The remaining games could not be loaded, so this uses each team\'s best and worst possible finish.',
 };
 
 /** Plain (i) copy: one short sentence per header, plus the bar. No sports jargon. */
@@ -131,6 +132,24 @@ export function pairsFromMatchups(weeks: Record<number, any[]> | null | undefine
     }
   }
   return games;
+}
+
+export type WeekFetchResult =
+  | { ok: true; week: number; matchups: any[] }
+  | { ok: false; week?: number };
+
+/**
+ * Build the remaining schedule from per-week fetches.
+ * If any week failed to load, return null so the caller uses weeksLeft bounds
+ * instead of a partial schedule (which can false-clinch or false-eliminate).
+ */
+export function scheduleFromWeekFetches(fetches: WeekFetchResult[]): RemainingGame[] | null {
+  if (!fetches.length || fetches.some(f => !f.ok)) return null;
+  const weeks: Record<number, any[]> = {};
+  for (const f of fetches) {
+    if (f.ok) weeks[f.week] = f.matchups || [];
+  }
+  return pairsFromMatchups(weeks);
 }
 
 function lastRegularWeek(playoffStart: number): number {
@@ -187,7 +206,7 @@ function positionOf(
     return i < j;
   };
 
-  if (hasDiv && seedType === 1) {
+  if (hasDiv) {
     const divIds: number[] = [];
     const seen: Record<number, true> = {};
     for (let i = 0; i < n; i++) {
@@ -336,6 +355,11 @@ function enumerate(input: RaceInput, byeCount: number): { flags: Flags[]; lockWi
   return { flags, lockWins };
 }
 
+function teamDivision(t: RaceTeam): number {
+  const d = t.division;
+  return d != null && d > 0 ? d : 0;
+}
+
 function fallback(input: RaceInput, byeCount: number): { flags: Flags[]; lockWins: number | null } {
   const teams = input.teams;
   const nT = teams.length;
@@ -363,33 +387,128 @@ function fallback(input: RaceInput, byeCount: number): { flags: Flags[]; lockWin
     maxW[i] = teams[i].wins + left[i];
   }
   const flags: Flags[] = [];
+  const div = teams.map(teamDivision);
+  const hasDiv = div.some(d => d > 0);
+
+  const lockLine = (): number | null => {
+    let lockWins: number | null = null;
+    const allMax = flags.map(f => f.maxW);
+    const hi = Math.max(0, ...allMax);
+    for (let w = 0; w <= hi + 1; w++) {
+      if (lockCheckAt(w, allMax, spots)) { lockWins = w; break; }
+    }
+    return lockWins;
+  };
+
+  if (hasDiv) {
+    const divIds: number[] = [];
+    const seen: Record<number, true> = {};
+    const members = new Map<number, number[]>();
+    for (let i = 0; i < nT; i++) {
+      const d = div[i];
+      if (!d) continue;
+      if (!seen[d]) { seen[d] = true; divIds.push(d); members.set(d, []); }
+      members.get(d)!.push(i);
+    }
+    const numDivs = divIds.length;
+    const wc = Math.max(0, spots - numDivs);
+
+    const maxIfTWinsOut = (t: number, i: number) => {
+      if (i === t) return maxW[t];
+      let m = maxW[i];
+      for (const opp of plays[t]) if (opp === i) m = Math.max(minW[i], m - 1);
+      return m;
+    };
+
+    const winsDiv = (t: number, tWins: number, otherMax: (i: number) => number) => {
+      const d = div[t];
+      if (!d) return false;
+      for (const u of members.get(d) || []) {
+        if (u === t) continue;
+        if (otherMax(u) >= tWins) return false; // worst PF: a tie goes against t
+      }
+      return true;
+    };
+
+    const lostDiv = (t: number) => {
+      const d = div[t];
+      if (!d) return true; // unassigned teams never get an auto bid
+      for (const u of members.get(d) || []) {
+        if (u !== t && minW[u] > maxW[t]) return true;
+      }
+      return false;
+    };
+
+    /** Non-winner threats whose assumed wins are at least `tWins`. One auto-bid per division is removed. */
+    const wcThreats = (t: number, tWins: number, assumed: (i: number) => number, exclusive: boolean) => {
+      const ahead = (i: number) => exclusive ? assumed(i) > tWins : assumed(i) >= tWins;
+      let threats = 0;
+      const tDiv = div[t];
+      if (tDiv) {
+        let k = 0;
+        for (const u of members.get(tDiv) || []) if (u !== t && ahead(u)) k++;
+        if (k > 0) threats += k - 1;
+      } else {
+        for (let u = 0; u < nT; u++) if (u !== t && !div[u] && ahead(u)) threats++;
+      }
+      for (const d of divIds) {
+        if (d === tDiv) continue;
+        let k = 0;
+        for (const u of members.get(d) || []) if (ahead(u)) k++;
+        if (k > 0) threats += k - 1;
+      }
+      // Unassigned teams (no division) always compete as wildcards
+      if (tDiv) {
+        for (let u = 0; u < nT; u++) if (!div[u] && ahead(u)) threats++;
+      }
+      return threats;
+    };
+
+    const inOnWins = (t: number, tWins: number, otherMax: (i: number) => number) => {
+      if (spots >= numDivs && winsDiv(t, tWins, otherMax)) return true;
+      if (wc <= 0) return false;
+      return wcThreats(t, tWins, otherMax, false) < wc;
+    };
+
+    const strongestWinner = (d: number) => Math.max(...(members.get(d) || []).map(i => maxW[i]));
+    const weakestWinner = (d: number) => Math.max(...(members.get(d) || []).map(i => minW[i]));
+
+    for (let t = 0; t < nT; t++) {
+      const locked = inOnWins(t, minW[t], i => maxW[i]);
+      const canWinDiv = !lostDiv(t);
+      const alive = (spots >= numDivs && canWinDiv)
+        || (wc > 0 && wcThreats(t, maxW[t], i => minW[i], true) < wc);
+      const control = alive && !locked && inOnWins(t, maxW[t], i => maxIfTWinsOut(t, i));
+      // PF-only: still alive on a favorable points-for tiebreak, but cannot get in on wins even if others finish at their floor.
+      const pfOnly = alive && !locked && !inOnWins(t, maxW[t], i => minW[i]);
+      const tDiv = div[t];
+      const clinch1 = !!tDiv && winsDiv(t, minW[t], i => maxW[i])
+        && divIds.every(d => d === tDiv || strongestWinner(d) < minW[t]);
+      const alive1 = canWinDiv && !!tDiv
+        && divIds.every(d => d === tDiv || weakestWinner(d) <= maxW[t]);
+      let clinchBye = false, aliveBye = false;
+      if (byeCount > 0 && tDiv) {
+        const threatsClinch = divIds.filter(d => d !== tDiv && strongestWinner(d) >= minW[t]).length;
+        const threatsAlive = divIds.filter(d => d !== tDiv && weakestWinner(d) > maxW[t]).length;
+        clinchBye = winsDiv(t, minW[t], i => maxW[i]) && threatsClinch < byeCount;
+        aliveBye = canWinDiv && threatsAlive < byeCount;
+      }
+      flags.push({
+        locked, alive, pfOnly, control,
+        clinch1, alive1, clinchBye, aliveBye,
+        minW: minW[t], maxW: maxW[t],
+      });
+    }
+    return { flags, lockWins: lockLine() };
+  }
+
   for (let t = 0; t < nT; t++) {
     const othersMax = maxW.filter((_, i) => i !== t);
     const othersMin = minW.filter((_, i) => i !== t);
     const locked = lockCheckAt(minW[t], othersMax, spots);
     const elim = eliminatedAt(maxW[t], othersMin, spots);
     const alive = !elim;
-    // Can this team get in on wins alone (worst PF) in some world? If their max beats enough others' mins strictly.
-    let alwaysAheadAtMax = 0;
-    for (const m of othersMin) if (m > maxW[t]) alwaysAheadAtMax++;
-    let canTie = 0;
-    for (const m of othersMin) if (m <= maxW[t]) canTie++;
-    const strictPossible = alwaysAheadAtMax + 1 <= spots && (nT - alwaysAheadAtMax >= 1);
-    // With worst PF, ties at maxWins go against them, so they need maxWins > others' min for a wins-lock path.
-    let othersCanMatchOrBeatMax = 0;
-    for (let i = 0; i < nT; i++) if (i !== t && maxW[i] >= maxW[t]) othersCanMatchOrBeatMax++;
-    // pfOnly: alive but cannot be strictly ahead of the cut on wins in any bound scenario.
-    // If even at max wins, at least `spots` others have minWins >= maxW, they can only sneak in on points (or not at all).
-    let othersMinGeMax = 0;
-    for (const m of othersMin) if (m >= maxW[t]) othersMinGeMax++;
-    const pfOnly = alive && !locked && othersMinGeMax >= spots - 0 && !lockCheckAt(maxW[t], othersMax, spots) && othersMin.filter(m => m > maxW[t]).length + othersMin.filter(m => m === maxW[t]).length >= spots;
-    // Simpler pfOnly: alive, not locked, and even winning out they don't lock on worst PF
     const winOutMax = maxW[t];
-    const othersMaxIfTWinsOut = othersMax.map((m, j) => {
-      // j indexes othersMax which skipped t — reconstruct
-      return m;
-    });
-    // Reduce opponents' max by 1 when schedule is known
     const othersMaxWinOut: number[] = [];
     for (let i = 0; i < nT; i++) if (i !== t) {
       let m = maxW[i];
@@ -398,27 +517,17 @@ function fallback(input: RaceInput, byeCount: number): { flags: Flags[]; lockWin
     }
     const control = alive && !locked && lockCheckAt(winOutMax, othersMaxWinOut, spots);
     const pfOnly2 = alive && !locked && !lockCheckAt(winOutMax, othersMaxWinOut, spots) && othersMin.filter(m => m > maxW[t]).length < spots && !control;
-    // #1 / bye bounds
     const clinch1 = lockCheckAt(minW[t], othersMax, 1);
     const alive1 = !eliminatedAt(maxW[t], othersMin, 1);
     const clinchBye = byeCount > 0 && lockCheckAt(minW[t], othersMax, byeCount);
     const aliveBye = byeCount > 0 && !eliminatedAt(maxW[t], othersMin, byeCount);
-    void othersMaxIfTWinsOut; void canTie; void strictPossible; void othersCanMatchOrBeatMax; void pfOnly;
     flags.push({
       locked, alive, pfOnly: pfOnly2, control,
       clinch1, alive1, clinchBye, aliveBye,
       minW: minW[t], maxW: maxW[t],
     });
   }
-  // lock line: smallest W such that a team with W wins would be locked vs others' max
-  let lockWins: number | null = null;
-  const allMax = flags.map(f => f.maxW);
-  const hi = Math.max(0, ...allMax);
-  for (let w = 0; w <= hi + 1; w++) {
-    // A team with exactly `w` current-or-final wins is locked if threats with max>=w < spots
-    if (lockCheckAt(w, allMax, spots)) { lockWins = w; break; }
-  }
-  return { flags, lockWins };
+  return { flags, lockWins: lockLine() };
 }
 
 export function playoffRace(input: RaceInput): RaceResult {
@@ -460,7 +569,7 @@ export function playoffRace(input: RaceInput): RaceResult {
       return i < j;
     };
     order.sort((i, j) => (betterFinal(i, j) ? -1 : 1));
-    if (hasDiv && seedType === 1) {
+    if (hasDiv) {
       const divIds: number[] = [];
       const seen: Record<number, true> = {};
       for (let i = 0; i < n; i++) { const d = div[i]; if (d && !seen[d]) { seen[d] = true; divIds.push(d); } }

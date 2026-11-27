@@ -4,8 +4,8 @@ import { Screen, Card, useApp, T } from '../ui';
 import { C } from '../theme';
 import { sleeper, DAY, avatarUrl } from '../api';
 import {
-  playoffRace, pairsFromMatchups, PLAYOFF_COPY,
-  type GroupId, type RaceResult, type RaceRow, type RaceTeam,
+  playoffRace, pairsFromMatchups, scheduleFromWeekFetches, PLAYOFF_COPY,
+  type GroupId, type RaceResult, type RaceRow, type RaceTeam, type WeekFetchResult,
 } from '../playoffRace';
 
 const GROUP_COLOR: Record<GroupId, string> = {
@@ -90,19 +90,24 @@ function CompactSeed({ title, rids, byRid }: { title: string; rids: number[]; by
 
 export default function PlayoffRun() {
   const { b } = useApp();
-  const [future, setFuture] = useState<Record<number, any[]> | null>(null);
+  const [future, setFuture] = useState<{ ok: true; weeks: Record<number, any[]> } | { ok: false } | null>(null);
   const lastReg = Math.max(1, (Number(b.playoffStart) || 16) - 1);
   const first = (Number(b.lastScored) || 0) + 1;
   useEffect(() => {
     let on = true;
     setFuture(null);
-    if (b.isPast || first > lastReg) { setFuture({}); return () => { on = false; }; }
+    if (b.isPast || first > lastReg) { setFuture({ ok: true, weeks: {} }); return () => { on = false; }; }
     const ws = Array.from({ length: Math.max(0, lastReg - first + 1) }, (_, i) => first + i);
-    Promise.all(ws.map(w => sleeper.matchups(b.league.league_id, w, DAY).catch(() => []))).then(arr => {
+    Promise.all(ws.map(w => sleeper.matchups(b.league.league_id, w, DAY).then(
+      (m): WeekFetchResult => Array.isArray(m) ? { ok: true, week: w, matchups: m } : { ok: false, week: w },
+      (): WeekFetchResult => ({ ok: false, week: w }),
+    ))).then(fetches => {
       if (!on) return;
-      const o: Record<number, any[]> = {};
-      ws.forEach((w, i) => { o[w] = arr[i] || []; });
-      setFuture(o);
+      const games = scheduleFromWeekFetches(fetches);
+      if (games == null) { setFuture({ ok: false }); return; }
+      const weeks: Record<number, any[]> = {};
+      for (const f of fetches) if (f.ok) weeks[f.week] = f.matchups;
+      setFuture({ ok: true, weeks });
     });
     return () => { on = false; };
   }, [b.league.league_id, b.loadedAt, first, lastReg, b.isPast]);
@@ -112,7 +117,8 @@ export default function PlayoffRun() {
       rid: t.rid, wins: t.wins, losses: t.losses, ties: t.ties || 0, pf: t.pf, division: t.division,
     }));
     const weeksLeft = Math.max(0, lastReg - (Number(b.lastScored) || 0));
-    const games = future == null ? [] : pairsFromMatchups(future);
+    const failed = future != null && !future.ok;
+    const games = future == null || failed ? [] : pairsFromMatchups(future.weeks);
     return playoffRace({
       teams,
       playoffTeams: Number(b.playoffTeams || b.league.settings?.playoff_teams || 0),
@@ -120,7 +126,7 @@ export default function PlayoffRun() {
       lastScored: b.lastScored,
       week: b.week,
       playoffSeedType: Number(b.league.settings?.playoff_seed_type || 0),
-      games: future == null && weeksLeft > 0 ? [] : games,
+      games: (future == null && weeksLeft > 0) || failed ? [] : games,
       weeksLeft,
     });
   }, [b, future, lastReg]);
@@ -129,6 +135,7 @@ export default function PlayoffRun() {
   for (const t of b.teams) byTeam[t.rid] = { name: t.name, display: t.display, avatar: t.avatar };
 
   const waiting = future == null && !b.isPast && first <= lastReg;
+  const scheduleFailed = future != null && !future.ok;
   const subtitle = result.unconfigured
     ? undefined
     : result.seasonOver || b.isPast
@@ -141,6 +148,7 @@ export default function PlayoffRun() {
         <Card><Text style={T.body}>{PLAYOFF_COPY.unconfigured}</Text></Card>
       ) : (
         <Card>
+          {scheduleFailed ? <Text style={[T.sub, { marginBottom: 8 }]}>{PLAYOFF_COPY.scheduleUnknown}</Text> : null}
           <CompactSeed
             title={result.seed1.clinched ? PLAYOFF_COPY.clinched1 : PLAYOFF_COPY.stillOpen1}
             rids={result.seed1.rids}

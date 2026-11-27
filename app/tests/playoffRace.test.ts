@@ -2,7 +2,7 @@
 // Run: npx tsx --require ./tests/rn-shim.cjs tests/playoffRace.test.ts
 import assert from 'node:assert/strict';
 import {
-  playoffByes, playoffRace, pairsFromMatchups, finishLine, formatRecord,
+  playoffByes, playoffRace, pairsFromMatchups, scheduleFromWeekFetches, finishLine, formatRecord,
   playoffUserStrings, GROUP_TITLES, PLAYOFF_COPY, PLAYOFF_INFO_SECS,
   type RaceTeam, type RemainingGame, type RaceInput,
 } from '../src/playoffRace';
@@ -197,6 +197,144 @@ function names(rids: number[], map: Record<number, string>) {
     const r = playoffRace({ teams: [team(1, 5, 5, 1000)], playoffTeams: 0, playoffStart: 16, lastScored: 10, week: 11, games: [] });
     assert.equal(r.unconfigured, true);
     assert.equal(r.groups.length, 0);
+  });
+
+
+  await t('2-division / 2-spot season-over with playoff_seed_type 0: weak division winner locked, strong runner-up out', () => {
+    // Div 1 is weak (Cedar 5-9 wins it). Div 2 is strong (Maple 11-3 wins it, Pine 9-5 is runner-up).
+    const teams: RaceTeam[] = [
+      team(1, 5, 9, 1100, { division: 1 }),
+      team(2, 4, 10, 1000, { division: 1 }),
+      team(3, 3, 11, 900, { division: 1 }),
+      team(4, 2, 12, 800, { division: 1 }),
+      team(5, 11, 3, 1800, { division: 2 }),
+      team(6, 9, 5, 1700, { division: 2 }),
+      team(7, 8, 6, 1600, { division: 2 }),
+      team(8, 7, 7, 1500, { division: 2 }),
+    ];
+    const r = playoffRace({ teams, playoffTeams: 2, playoffStart: 15, lastScored: 14, week: 15, playoffSeedType: 0, games: [] });
+    assert.equal(r.seasonOver, true);
+    assert.equal(r.byRid[1].group, 'locked', '5-9 division winner is locked in');
+    assert.equal(r.byRid[6].group, 'out', '9-5 runner-up is out');
+    assert.equal(r.byRid[5].group, 'locked');
+    assert.deepEqual(r.groups.find(g => g.id === 'locked')!.rows.map(x => x.rid).sort((a, b) => a - b), [1, 5]);
+  });
+
+  await t('6-team playoffs, 2 divisions, playoff_seed_type 0: byes go to the division winners', () => {
+    // Maple 11-3 would be #2 overall, but byes belong to the two division winners (Cedar 8-6 and Oak 12-2).
+    const teams: RaceTeam[] = [
+      team(1, 8, 6, 1400, { division: 1 }),
+      team(2, 7, 7, 1300, { division: 1 }),
+      team(3, 6, 8, 1200, { division: 1 }),
+      team(4, 5, 9, 1100, { division: 1 }),
+      team(5, 4, 10, 1000, { division: 1 }),
+      team(6, 12, 2, 1900, { division: 2 }),
+      team(7, 11, 3, 1800, { division: 2 }),
+      team(8, 10, 4, 1700, { division: 2 }),
+      team(9, 9, 5, 1600, { division: 2 }),
+      team(10, 3, 11, 900, { division: 2 }),
+    ];
+    const r = playoffRace({ teams, playoffTeams: 6, playoffStart: 15, lastScored: 14, week: 15, playoffSeedType: 0, games: [] });
+    assert.equal(r.seasonOver, true);
+    assert.ok(r.byes && r.byes.count === 2);
+    assert.deepEqual(r.byes!.clinched.slice().sort((a, b) => a - b), [1, 6]);
+    assert.equal(r.byes!.open.length, 0);
+    assert.equal(r.byRid[7].clinchBye, false, '11-3 runner-up does not get a bye');
+    assert.equal(r.byRid[1].clinchBye, true);
+    assert.equal(r.byRid[6].clinchBye, true);
+  });
+
+  await t('divisions apply in enumerate: weak-division leader is locked, strong-division runner-up is out', () => {
+    const teams: RaceTeam[] = [
+      team(1, 6, 7, 1200, { division: 1 }),
+      team(2, 4, 9, 1000, { division: 1 }),
+      team(3, 3, 10, 900, { division: 1 }),
+      team(4, 2, 11, 800, { division: 1 }),
+      team(5, 11, 2, 1800, { division: 2 }),
+      team(6, 9, 4, 1700, { division: 2 }),
+      team(7, 8, 5, 1600, { division: 2 }),
+      team(8, 7, 6, 1500, { division: 2 }),
+    ];
+    // One week left. Cedar (1) does not play Birch (2), so Birch cannot catch 6 wins.
+    const games: RemainingGame[] = [
+      { a: 1, b: 4 }, { a: 2, b: 3 }, { a: 5, b: 8 }, { a: 6, b: 7 },
+    ];
+    const r = playoffRace({ teams, playoffTeams: 2, playoffStart: 16, lastScored: 13, week: 14, playoffSeedType: 0, games });
+    assert.equal(r.usedEnum, true);
+    assert.equal(r.byRid[1].group, 'locked', '6-7 division leader cannot be caught');
+    assert.equal(r.byRid[6].group, 'out', '9-4 runner-up cannot catch 11-2 and there are no leftover spots');
+    assert.equal(r.byRid[5].group, 'locked');
+  });
+
+  await t('divisions apply in bounds fallback with a missing schedule', () => {
+    const teams: RaceTeam[] = [
+      team(1, 6, 7, 1200, { division: 1 }),
+      team(2, 4, 9, 1000, { division: 1 }),
+      team(3, 3, 10, 900, { division: 1 }),
+      team(4, 2, 11, 800, { division: 1 }),
+      team(5, 11, 2, 1800, { division: 2 }),
+      team(6, 9, 4, 1700, { division: 2 }),
+      team(7, 8, 5, 1600, { division: 2 }),
+      team(8, 7, 6, 1500, { division: 2 }),
+    ];
+    const r = playoffRace({ teams, playoffTeams: 2, playoffStart: 16, lastScored: 13, week: 14, playoffSeedType: 0, games: [], weeksLeft: 1 });
+    assert.equal(r.usedFallback, true);
+    assert.equal(r.byRid[1].group, 'locked', 'weak-division leader is not falsely eliminated by the strong division');
+    assert.equal(r.byRid[6].group, 'out', 'runner-up is not falsely clinched ahead of the other division winner');
+    assert.equal(r.byRid[5].group, 'locked');
+  });
+
+  await t('divisions apply in bounds fallback when more than 16 games remain', () => {
+    // Leaders already cannot be caught in their own division, even if chasers play all 17 remaining games.
+    const teams: RaceTeam[] = [
+      team(1, 20, 0, 2000, { division: 1 }),
+      team(2, 2, 18, 1000, { division: 1 }),
+      team(3, 1, 19, 900, { division: 1 }),
+      team(4, 0, 20, 800, { division: 1 }),
+      team(5, 19, 1, 1900, { division: 2 }),
+      team(6, 2, 18, 1100, { division: 2 }),
+      team(7, 1, 19, 1000, { division: 2 }),
+      team(8, 0, 20, 900, { division: 2 }),
+    ];
+    const games: RemainingGame[] = [];
+    for (let i = 0; i < 17; i++) games.push({ a: (i % 8) + 1, b: ((i + 3) % 8) + 1 });
+    const r = playoffRace({ teams, playoffTeams: 2, playoffStart: 38, lastScored: 20, week: 21, playoffSeedType: 0, games });
+    assert.equal(r.usedFallback, true);
+    assert.equal(r.usedEnum, false);
+    assert.equal(r.byRid[1].group, 'locked');
+    assert.equal(r.byRid[5].group, 'locked');
+    assert.equal(r.byRid[6].group, 'out', 'runner-up cannot catch their division winner or steal the other auto bid');
+    assert.equal(r.groups.flatMap(g => g.rows).length, 8);
+  });
+
+  await t('a failed future-week fetch falls back to weeksLeft bounds, not a partial schedule', () => {
+    const teams: RaceTeam[] = [
+      team(1, 10, 2, 1800), team(2, 8, 4, 1700), team(3, 8, 4, 1600), team(4, 8, 4, 1500),
+      team(5, 8, 4, 1400), team(6, 4, 8, 1100), team(7, 4, 8, 1000), team(8, 4, 8, 900),
+    ];
+    const week12 = [
+      { roster_id: 1, matchup_id: 1 }, { roster_id: 2, matchup_id: 1 },
+      { roster_id: 3, matchup_id: 2 }, { roster_id: 4, matchup_id: 2 },
+      { roster_id: 5, matchup_id: 3 }, { roster_id: 6, matchup_id: 3 },
+      { roster_id: 7, matchup_id: 4 }, { roster_id: 8, matchup_id: 4 },
+    ];
+    // Naive catch(() => []) would treat week 13 and 14 as no games, leaving only 1 remaining game each.
+    const naiveWeeks = { 12: week12, 13: [] as any[], 14: [] as any[] };
+    const naive = playoffRace({ teams, playoffTeams: 4, playoffStart: 16, lastScored: 11, week: 12, games: pairsFromMatchups(naiveWeeks), weeksLeft: 3 });
+    assert.equal(naive.usedEnum, true);
+    assert.equal(naive.byRid[1].group, 'locked', 'partial schedule would false-clinch the 10-2 team');
+
+    const packed = scheduleFromWeekFetches([
+      { ok: true, week: 12, matchups: week12 },
+      { ok: false, week: 13 },
+      { ok: true, week: 14, matchups: week12 },
+    ]);
+    assert.equal(packed, null, 'any failed week discards the partial schedule');
+
+    const safe = playoffRace({ teams, playoffTeams: 4, playoffStart: 16, lastScored: 11, week: 12, games: packed || [], weeksLeft: 3 });
+    assert.equal(safe.usedFallback, true);
+    assert.equal(safe.usedEnum, false);
+    assert.notEqual(safe.byRid[1].group, 'locked', '3 weeks left, chasers can still reach 11 wins');
   });
 
   await t('no jargon in labels, finish lines, or info copy', () => {
